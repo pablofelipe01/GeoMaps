@@ -1,0 +1,40 @@
+# Vercel construye esta carpeta con uv, y uv exige un [project] de verdad: sin
+# el, el build muere con "No `project` table found". Las dependencias viven
+# aca y en ningun otro lado; requirements.txt es un puntero, para no tener dos
+# listas que se desincronizan.
+[project]
+name = "geomaps-backend"
+version = "0.1.0"
+description = "Convierte mapas a MBTiles, guarda archivos y registra en Airtable"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi==0.115.6",
+    "uvicorn[standard]==0.34.0",
+    "python-multipart==0.0.20",
+    "pydantic==2.10.4",
+    "pydantic-settings==2.7.1",
+    "httpx==0.28.1",
+    "boto3>=1.35.0",
+    "bcrypt>=4.1.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest==8.3.4",
+    "pytest-asyncio==0.25.2",
+    "respx==0.22.0",
+]
+
+# GDAL NO va aca. Sus ruedas dependen de binarios del sistema y Vercel no los
+# trae; ademas convertir un GeoTIFF de 2 GB no cabe en el tiempo ni en la
+# memoria de una funcion serverless. La conversion corre en un worker aparte
+# (ver tools/README.md) y este backend solo la encola y publica el resultado.
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["app"]
+
+[tool.vercel]
+entrypoint = "app/main.py"

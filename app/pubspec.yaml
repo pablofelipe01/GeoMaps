@@ -1,0 +1,126 @@
+name: geomaps
+description: "Mapas georreferenciados offline: carga el plano del predio, ubicate en el sin senal, marca y mide"
+publish_to: 'none'
+
+version: 0.1.0+1
+
+environment:
+  sdk: ^3.13.2
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  cupertino_icons: ^1.0.8
+
+  # --- Mapa -------------------------------------------------------------
+  # flutter_map es raster. Se eligio sobre maplibre_gl porque superponer las
+  # capas del usuario (el MBTiles que trajo topografia) sobre el satelite es
+  # una linea de codigo, y porque no arrastra binarios nativos por plataforma.
+  flutter_map: ^8.3.2
+  latlong2: ^0.10.1
+
+  # El mapa offline del usuario: un SQLite con las teselas adentro.
+  flutter_map_mbtiles: ^2.0.0
+  mbtiles: ^0.4.0
+
+  # Cache de las teselas que SI se bajan de internet (Esri, OSM). Permite
+  # "descargar esta region" sobre el mapa base, que es distinto de importar
+  # un MBTiles propio.
+  flutter_map_tile_caching: ^10.1.1
+
+  # Reproyeccion. Un plano de topografia colombiano llega en MAGNA-SIRGAS
+  # (EPSG:3116, 9377...), no en WGS84.
+  proj4dart: ^2.1.0
+
+  # --- Datos ------------------------------------------------------------
+  drift: ^2.20.0
+  drift_flutter: ^0.2.0
+  path: ^1.9.0
+  path_provider: ^2.1.6
+  shared_preferences: ^2.5.5
+
+  # --- Estado -----------------------------------------------------------
+  flutter_riverpod: ^2.6.1
+
+  # --- GPS --------------------------------------------------------------
+  geolocator: ^13.0.2
+  permission_handler: ^13.0.1
+  # El trazado tiene que seguir grabando con la pantalla apagada y el telefono
+  # en el bolsillo. Sin servicio en primer plano, Android mata el proceso a los
+  # pocos minutos y el recorrido queda cortado sin aviso.
+  flutter_foreground_task: ^9.1.0
+
+  # --- Red --------------------------------------------------------------
+  http: ^1.6.0
+  connectivity_plus: ^7.3.1
+
+  # --- Camara y archivos -------------------------------------------------
+  camera: ^0.11.0
+  image_picker: ^1.2.3
+  file_picker: ^8.1.0
+  share_plus: ^13.3.0
+  archive: ^4.0.9
+
+  # --- Entregables -------------------------------------------------------
+  pdf: ^3.13.0
+  printing: ^5.15.0
+
+  # --- Varios ------------------------------------------------------------
+  intl: ^0.20.3
+  uuid: ^4.6.0
+  bcrypt: ^1.2.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+  drift_dev: ^2.20.0
+  build_runner: ^2.4.13
+
+flutter:
+  uses-material-design: true
+
+  assets:
+    # Semilla offline: la app tiene que poder arrancar y mostrar la lista de
+    # proyectos la primera vez, en un potrero, sin haber hablado nunca con el
+    # backend.
+    - assets/semilla/proyectos.json
+    - assets/semilla/simbolos.json
+
+    # Marca Sirius, igual que en sirius_agro: PNG para pantalla, SVG para el
+    # PDF (el generador de PDF dibuja el contorno y no se pixela al imprimir).
+    - assets/marca/sirius.png
+    - assets/marca/sirius_blanco.png
+    - assets/marca/sirius.svg
+    - assets/marca/sirius_mono_blanco.svg
+
+    # Museo Slab va como asset ademas de como fuente porque el generador de PDF
+    # no lee el registro de fuentes de Flutter: carga el archivo a mano.
+    - assets/fuentes/MuseoSlab-300.ttf
+    - assets/fuentes/MuseoSlab-500.ttf
+    - assets/fuentes/MuseoSlab-700.ttf
+    - assets/fuentes/MuseoSlab-900.ttf
+    # Reserva del PDF: si un dato trae un caracter que Museo Slab no dibuja,
+    # sale en Roboto y no como un cuadro vacio en el papel que se entrega.
+    - assets/fuentes/Roboto-Regular.ttf
+    - assets/fuentes/Roboto-Bold.ttf
+
+  fonts:
+    # Los pesos de Museo no coinciden con los de Material: su "regular" es el
+    # 500 y su "bold" el 700. Cada peso se declara contra el numero que el
+    # codigo ya usa.
+    - family: MuseoSlab
+      fonts:
+        - asset: assets/fuentes/MuseoSlab-300.ttf
+          weight: 300
+        - asset: assets/fuentes/MuseoSlab-500.ttf
+          weight: 400
+        - asset: assets/fuentes/MuseoSlab-500.ttf
+          weight: 500
+        - asset: assets/fuentes/MuseoSlab-700.ttf
+          weight: 600
+        - asset: assets/fuentes/MuseoSlab-700.ttf
+          weight: 700
+        - asset: assets/fuentes/MuseoSlab-900.ttf
+          weight: 900

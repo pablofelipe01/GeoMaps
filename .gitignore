@@ -1,0 +1,61 @@
+# --- Secretos -----------------------------------------------------------
+# Nunca. El repo guarda los `*.example`; las llaves reales viven solo en la
+# maquina de cada quien y en el panel de Vercel. Una llave de Airtable
+# commiteada da acceso de escritura a toda la base, y una de AWS da acceso al
+# bucket entero.
+#
+# Los patrones van sin prefijo de carpeta a proposito: asi atrapan el .env de
+# backend/, el de la raiz y el que alguien cree manana en un subdirectorio
+# nuevo. La negacion de abajo es lo unico que salva a los ejemplos.
+.env
+.env.*
+*.env
+!.env.example
+!*.env.example
+
+# Las llaves de la app Flutter. Entran al build por
+# `--dart-define-from-file=dart_defines.json`, asi que este archivo tiene
+# exactamente el mismo peso que un .env.
+dart_defines.json
+!dart_defines.example.json
+
+# Firma del APK. Un keystore filtrado deja que cualquiera publique una
+# actualizacion que los telefonos del equipo van a aceptar como legitima.
+*.jks
+*.keystore
+key.properties
+
+*.pem
+*.p12
+
+# --- Flutter ------------------------------------------------------------
+app/.dart_tool/
+app/build/
+app/.flutter-plugins
+app/.flutter-plugins-dependencies
+app/android/.gradle/
+app/android/local.properties
+app/ios/Pods/
+app/windows/flutter/ephemeral/
+*.iml
+
+# Codigo generado por drift/build_runner. Se regenera con
+# `dart run build_runner build` y versionarlo solo produce conflictos.
+*.g.dart
+*.freezed.dart
+
+# --- Backend ------------------------------------------------------------
+backend/.venv/
+__pycache__/
+*.pyc
+backend/.pytest_cache/
+
+# --- Mapas --------------------------------------------------------------
+# Las teselas NO van al repo. Un MBTiles de un municipio pesa cientos de MB
+# y git no sabe versionar un SQLite binario: cada cambio duplica el archivo
+# entero en el historial. Los mapas viven en el bucket.
+*.mbtiles
+*.geotiff
+*.tif
+*.kmz
+tools/salida/

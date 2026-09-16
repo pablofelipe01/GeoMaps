@@ -1,0 +1,8 @@
+[
+  { "clave": "generico",       "titulo": "Punto",            "icono": "place" },
+  { "clave": "muestra",        "titulo": "Muestra",          "icono": "science" },
+  { "clave": "arbol",          "titulo": "Arbol",            "icono": "park" },
+  { "clave": "fuenteDeAgua",   "titulo": "Fuente de agua",   "icono": "water_drop" },
+  { "clave": "infraestructura","titulo": "Infraestructura",  "icono": "home_work" },
+  { "clave": "riesgo",         "titulo": "Riesgo",           "icono": "warning" }
+]
