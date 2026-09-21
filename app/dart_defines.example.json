@@ -1,7 +1,8 @@
 {
-  "_comentario": "Plantilla. Copiar a dart_defines.json y llenar. Ese archivo NO se commitea.",
-  "_uso": "flutter run --dart-define-from-file=dart_defines.json",
-
+  "_comentario": "Plantilla. Copiar a dart_defines.json y llenar.",
+  "_uso": "flutter run --dart-define-from-file=dart_defines.json  (o F5 en VS Code)",
   "API_BASE": "http://10.0.2.2:8000",
-  "API_KEY": ""
+  "API_KEY": "",
+  "_google": "Client id de tipo WEB del proyecto de Google Cloud, no el de Android. Sin este, google_sign_in no devuelve idToken.",
+  "GOOGLE_SERVER_CLIENT_ID": ""
 }

@@ -13,6 +13,55 @@ Consecuencias directas:
 - Airtable es el **registro**, no la base operativa.
 - Todo id lo genera el telefono (UUID v4), no Airtable.
 - La app arranca y funciona con el backend caido.
+- **La sesion guardada manda.** Un JWT vence en una hora y refrescarlo necesita
+  red. Exigir un token valido para abrir la app seria pedir login justo en el
+  unico lugar donde no se puede hacer.
+
+## Identidad: registro abierto
+
+GeoMaps no es una app interna de Sirius, asi que la identidad no sale de la
+nomina: cualquiera crea la suya. Se entra por dos puertas y no hay proveedor de
+identidad de por medio — el backend verifica el ID token contra el **JWKS
+publico de Google**, o la clave contra un **hash bcrypt**, y guarda la persona
+en Airtable, que es la unica plataforma que el equipo opera.
+
+| Puerta | Credencial | `Auth UID` |
+|---|---|---|
+| Google | ID token firmado por Google | el `sub` del token |
+| Correo | correo + clave | `pwd_<uuid4>` |
+
+**Por que las dos y no solo Google.** Google Sign-In necesita los servicios de
+Google Play, y los telefonos baratos que se usan en campo no siempre los tienen
+al dia — o los tienen rotos de una forma que no se arregla desde la app. Una
+cuenta con clave no depende de nada de eso. Google se queda porque para quien
+si puede usarlo es un toque en vez de tres campos.
+
+**Lo que cuesta tener contrasenas.** Sin ellas no habia que construir tres
+flujos enteros — recuperacion de clave, verificacion de correo y freno de fuerza
+bruta — que son justo donde los agujeros de autenticacion se cuelan. Con ellas
+hay que pagarlos, y hoy estan pagados a medias:
+
+- **Fuerza bruta**: hecho. 8 fallos seguidos bloquean 15 minutos. El contador
+  vive en Airtable, no en memoria: el backend corre en funciones serverless y un
+  contador que se reinicia solo no frena nada.
+- **Hash**: hecho. bcrypt con sal por usuario.
+- **Verificacion de correo**: pendiente. Las cuentas de clave nacen sin
+  verificar y nada depende todavia de ese campo.
+- **Recuperacion de clave**: pendiente. Hace falta poder mandar correo y este
+  backend no manda correo. Por ahora se restablece a mano desde Airtable, y la
+  pantalla de registro lo dice.
+
+Despues del login, el backend emite un **JWT propio de 30 dias**. Verificarlo no
+cuesta red ni una consulta a Airtable, y eso importa por dos razones: en el
+monte no hay con quien validar, y Airtable topa en 5 requests por segundo por
+base — un techo que el login no puede gastar porque lo comparte con la
+sincronizacion.
+
+Eso trae una consecuencia que atraviesa todo el diseno: **la base deja de ser de
+una sola empresa.** Airtable no tiene seguridad por fila y el PAT ve todo, asi
+que lo unico que separa los predios de un usuario de los de otro es que el
+backend filtre por `Dueno Auth UID` en cada consulta. Ver
+[`airtable-schema.md`](airtable-schema.md#aislamiento-entre-cuentas).
 
 ## Las tres capas
 
@@ -23,22 +72,23 @@ Consecuencias directas:
 │  data/    Drift (SQLite) + repositorios + sincronizador                    │
 │  core/    geometria, MBTiles, KML/GPX, GPS, cliente HTTP                   │
 └────────────────────────────────┬───────────────────────────────────────────┘
-                                 │ HTTPS + X-API-Key   (solo cuando hay red)
-┌────────────────────────────────▼───────────────────────────────────────────┐
+                    │ HTTPS  ·  X-API-Key (quien llama)
+                    │        ·  Bearer JWT (quien es)      solo con red
+┌───────────────────▼────────────────────────────────────────────────────────┐
 │  backend/ FastAPI en Vercel                                                │
-│    services/teselas.py       GeoPDF/GeoTIFF -> MBTiles (llama a GDAL)      │
-│    services/almacenamiento.py  firma URLs de S3 (subida y descarga)                │
-│    services/airtable.py      upsert por UUID                               │
-│    services/nomina.py        login contra Sirius Nomina Core               │
-└──────────┬──────────────────────────────┬──────────────────────────────────┘
-           │                              │
-    ┌──────▼────────┐             ┌───────▼─────────┐
-    │  AWS S3 privado│             │    Airtable     │
-    │  MBTiles       │             │  llaves S3      │
-    │  geometrias    │             │  bbox, area,    │
-    │  KML, GPX, PDF │             │  precision,     │
-    │  fotos         │             │  vista previa   │
-    └────────────────┘             └─────────────────┘
+│    services/auth.py            verifica el JWT y aisla por dueno           │
+│    services/teselas.py         GeoPDF/GeoTIFF -> MBTiles (llama a GDAL)    │
+│    services/almacenamiento.py  firma URLs de S3 (subida y descarga)        │
+│    services/airtable.py        upsert por UUID                             │
+└────┬──────────────────┬──────────────────────┬─────────────────────────────┘
+     │                  │                      │ solo en el login
+┌────▼──────────┐ ┌─────▼──────────┐ ┌─────────▼────────┐
+│ AWS S3 privado│ │    Airtable    │ │  JWKS de Google  │
+│ MBTiles       │ │  usuarios      │ │  claves publicas │
+│ geometrias    │ │  llaves S3     │ │  para verificar  │
+│ KML, GPX, PDF │ │  bbox, area,   │ │  el ID token     │
+│ fotos         │ │  vista previa  │ │                  │
+└───────────────┘ └────────────────┘ └──────────────────┘
 ```
 
 ## Por que el backend convierte los mapas y no el telefono

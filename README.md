@@ -38,7 +38,8 @@ la app nunca lo espera: el dato se guarda local primero y se sincroniza despues.
 | Geometria | `core/geo.dart` | Haversine y area sobre WGS84, portado de `sirius_agro` |
 | Export | `core/kml.dart`, `core/gpx.dart` | KML 2.2 y GPX 1.1 escritos a mano; son XML plano |
 | PDF | **pdf + printing** | Entregable impreso con la marca Sirius |
-| Backend | **FastAPI** en Vercel | Guarda las llaves. La app nunca ve el token de Airtable |
+| Identidad | **Correo + clave, o Google Sign-In** | Registro abierto por dos puertas. El backend verifica el ID token contra el JWKS de Google, o la clave contra un hash bcrypt, y guarda al usuario en Airtable: ningun proveedor de identidad extra. La puerta de clave existe porque Google Sign-In depende de los servicios de Google Play, que en los telefonos de campo no siempre estan sanos |
+| Backend | **FastAPI** en Vercel | Guarda las llaves y aisla los datos de cada cuenta. La app nunca ve el token de Airtable ni las de AWS |
 | Registro | **Airtable** | Usuarios, proyectos, mapas, trazados, waypoints y archivos generados |
 | Archivos | **AWS S3** (privado) | MBTiles, geometrias, KML, GPX, PDF y fotos. Se accede por URL prefirmada; el APK nunca lleva credenciales de AWS |
 | Teselas base | **Esri World Imagery / OSM** | Sin llave y sin facturacion: el mapa no puede quedarse en blanco porque vencio una tarjeta |

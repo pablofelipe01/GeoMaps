@@ -27,19 +27,36 @@ class Settings(BaseSettings):
     airtable_tabla_archivos: str = "Archivos"
     airtable_tabla_sincronizaciones: str = "Sincronizaciones"
 
-    # --- Login -----------------------------------------------------------
-    # Otra base y otro PAT, de solo lectura: ver .env.example.
-    nomina_token: str = ""
-    nomina_base_id: str = ""
-    nomina_tabla: str = "Personal"
+    # --- Identidad: Google + Airtable ------------------------------------
+    # Registro abierto con cuenta de Google. No hay proveedor de identidad de
+    # por medio: este backend verifica el ID token contra el JWKS de Google y
+    # guarda la persona en Airtable. Ninguna contrasena existe en el sistema.
 
-    # Hasta que orden jerarquico se considera Coordinador en ESTA app. En
-    # nomina 1 = Super Admin y el numero sube al bajar el privilegio.
-    nomina_orden_coordinador: int = 2
+    # El client id de tipo **Web** del proyecto de Google Cloud. Es el que la
+    # app manda como `serverClientId` y el que aparece en el `aud` del token.
+    # El gran tropiezo de Android: sin este, `google_sign_in` entrega la sesion
+    # pero NO entrega idToken, y el backend se queda sin nada que verificar.
+    google_client_id_web: str = ""
 
-    # Cuantos dias puede el telefono validar la contrasena sin haber hablado
-    # con el backend.
-    dias_max_offline: int = 30
+    # El client id de tipo Android. No viaja en el token, pero tiene que existir
+    # en Google Cloud con la huella SHA-1 de la firma del APK o el login falla
+    # en el telefono con un error que no explica nada (ApiException: 10).
+    google_client_id_android: str = ""
+
+    # Secreto con el que se firman NUESTROS JWT. No tiene nada que ver con
+    # Google. Rotarlo cierra todas las sesiones abiertas, que es justamente lo
+    # que se quiere si alguna vez se filtra.
+    # Generar con: python -c "import secrets; print(secrets.token_urlsafe(48))"
+    jwt_secret: str = ""
+
+    # Cuanto dura nuestro JWT. Largo a proposito: es lo que permite entrar con
+    # senal una vez y trabajar un mes en el monte sin volver a ver un login.
+    # El de Google vence en una hora y no serviria para eso.
+    jwt_ttl_dias: int = 30
+
+    # Techo de almacenamiento por cuenta. Lo mismo: con registro abierto, el
+    # limite tiene que existir antes de que exista el primer abuso.
+    cuota_mb_por_usuario: int = 2048
 
     # --- AWS S3 ----------------------------------------------------------
     aws_access_key_id: str = ""

@@ -1,4 +1,3 @@
-import 'geo.dart';
 
 /// GeoJSON: el formato en que el trazado sale del telefono y vive en S3.
 ///

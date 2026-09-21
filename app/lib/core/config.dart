@@ -16,8 +16,17 @@ class Config {
   /// quien llama es esta app.
   static const apiKey = String.fromEnvironment('API_KEY');
 
-  /// Cuantos dias puede el telefono validar la contrasena contra el hash local
-  /// sin haber hablado con el backend. Pasado el plazo exige un login con red,
-  /// que es lo unico que ve si la persona sigue activa en nomina.
+  /// Cuantos dias vale la sesion guardada sin volver a hablar con el backend.
+  /// Tiene que coincidir con `JWT_TTL_DIAS` del backend: si la app cree que
+  /// dura mas, deja trabajar y despues rechaza la sincronizacion con un 401
+  /// que nadie va a saber leer en un potrero.
   static const diasMaxOffline = 30;
+
+  /// Client id **Web** del proyecto de Google Cloud. Va como `serverClientId`
+  /// de `google_sign_in`: sin el, Android entrega la sesion pero no entrega
+  /// idToken, y sin idToken el backend no tiene nada que verificar. No es
+  /// secreto, pero se pasa por dart-define para no tener que recompilar el
+  /// codigo al cambiar de proyecto de Google.
+  static const googleServerClientId =
+      String.fromEnvironment('GOOGLE_SERVER_CLIENT_ID');
 }

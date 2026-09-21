@@ -23,26 +23,42 @@ mixin Sincronizable on Table {
   DateTimeColumn get actualizadoEn => dateTime().nullable()();
 }
 
+/// La copia local de quien esta usando la app.
+///
+/// La identidad la verifica Google; esto es lo que el telefono necesita para
+/// funcionar sin senal: saber de quien es el trabajo que se esta guardando.
+/// **Ninguna credencial se guarda aca.** El JWT vive en el Keystore de Android
+/// via `flutter_secure_storage`, no en esta tabla ni en SharedPreferences.
 class Usuarios extends Table with Sincronizable {
   IntColumn get id => integer().autoIncrement()();
-  TextColumn get nombreCompleto => text()();
-  TextColumn get documento => text()();
+
+  /// El `sub` del ID token de Google. Es la identidad estable de la persona y
+  /// lo que marca de quien es cada proyecto.
+  ///
+  /// Se guarda el `sub`, no el correo: alguien puede cambiar la direccion de su
+  /// cuenta de Google y seguir siendo la misma persona. Colgar los proyectos
+  /// del correo haria que ese cambio le borre su trabajo de la vista.
+  TextColumn get authUid => text().unique()();
+
+  TextColumn get nombre => text()();
   TextColumn get correo => text().nullable()();
+
   TextColumn get rol => text()();
+  TextColumn get fotoUrl => text().nullable()();
 
-  /// Hash bcrypt de la contrasena, para poder entrar sin senal. La contrasena
-  /// en claro no se guarda nunca y el hash lo entrega el backend al validar
-  /// contra nomina.
-  TextColumn get hashPassword => text().nullable()();
-
-  /// Ultima vez que el login se valido CON red. Pasados los dias de
-  /// `Config.diasMaxOffline` la app exige conexion: es lo unico que ve si la
-  /// persona sigue activa en nomina.
-  DateTimeColumn get validadoEn => dateTime().nullable()();
+  /// Cuando vence el JWT que tiene guardado. Se lee sin red, que es el punto:
+  /// la app sabe cuantos dias le quedan de trabajo offline sin consultar nada.
+  DateTimeColumn get sesionVenceEn => dateTime().nullable()();
 }
 
 class Proyectos extends Table with Sincronizable {
   IntColumn get id => integer().autoIncrement()();
+
+  /// De quien es. Se guarda tambien en el telefono porque un mismo aparato
+  /// puede pasar por varias cuentas: cerrar sesion y entrar con otra no puede
+  /// mostrar los predios de la anterior.
+  TextColumn get duenoAuthUid => text()();
+
   TextColumn get nombre => text()();
   TextColumn get cliente => text().nullable()();
   TextColumn get municipio => text().nullable()();

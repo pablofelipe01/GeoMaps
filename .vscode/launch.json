@@ -1,0 +1,39 @@
+{
+  // Modo desarrollo con hot reload.
+  //
+  // F5 arranca la app en el celular. Cada vez que guardes un archivo .dart, el
+  // cambio aparece en pantalla en un segundo, sin reinstalar ni perder el
+  // estado (sigue el mapa donde estaba y el GPS conectado).
+  //
+  // Hot reload NO alcanza para tres cosas, que piden reinicio completo
+  // (Ctrl+Shift+F5) o recompilar:
+  //   - cambiar `main()` o el estado inicial de un widget
+  //   - agregar o quitar dependencias del pubspec
+  //   - tocar cualquier cosa de android/ (manifiesto, gradle, permisos)
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "GeoMaps (celular)",
+      "request": "launch",
+      "type": "dart",
+      "program": "app/lib/main.dart",
+      "cwd": "app",
+      // Las llaves entran por archivo y no por la linea de comandos: asi no
+      // quedan en el historial de la terminal ni en este JSON, que si se
+      // commitea.
+      "toolArgs": ["--dart-define-from-file", "dart_defines.json"]
+    },
+    {
+      "name": "GeoMaps (perfil - medir rendimiento)",
+      "request": "launch",
+      "type": "dart",
+      "program": "app/lib/main.dart",
+      "cwd": "app",
+      // El modo debug es varias veces mas lento que el real. Para juzgar si el
+      // mapa satelital rinde en el telefono hay que medirlo en profile, o se
+      // descarta un stack que en realidad andaba bien.
+      "flutterMode": "profile",
+      "toolArgs": ["--dart-define-from-file", "dart_defines.json"]
+    }
+  ]
+}

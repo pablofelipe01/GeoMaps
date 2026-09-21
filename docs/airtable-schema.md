@@ -44,20 +44,59 @@ USUARIO -> PROYECTO -> MAPA (capa base offline)
 
 | Campo | Tipo | Nota |
 |---|---|---|
-| `Codigo usuario` | Single line text | UUID. Clave del upsert |
-| `Nombre completo` | Single line text | |
-| `Documento` | Single line text | Identidad real de la persona |
-| `Correo` | Email | |
-| `Rol` | Single select | `Campo` / `Coordinador` / `Admin` |
-| `Activo` | Checkbox | Desmarcarlo bloquea el login en el siguiente arranque con red |
+| `Auth UID` | Single line text | El `sub` del ID token de Google, o `pwd_<uuid4>` si la cuenta es de clave. **Clave real de la identidad y del upsert** |
+| `Codigo usuario` | Single line text | UUID interno, para los enlaces de las demas tablas |
+| `Nombre` | Single line text | Lo que trajo Google, o lo que escribio la persona al registrarse |
+| `Correo` | Email | **Unico en la tabla.** Siempre en minusculas |
+| `Proveedor` | Single select | `Google` / `Correo`. Por cual puerta entra esta cuenta |
+| `Hash clave` | Single line text | bcrypt. **Vacio en las cuentas de Google.** Nunca sale de Airtable |
+| `Correo verificado` | Checkbox | Verdadero en las de Google. Falso en las de clave: no hay envio de correo todavia |
+| `Intentos fallidos` | Number (entero) | Contador de logins con clave errada. Se pone en 0 al entrar bien |
+| `Ultimo intento fallido` | Date with time | Con el anterior, arma el bloqueo temporal |
+| `Foto` | URL | El avatar de Google, si lo hay. Vacio en las cuentas de clave |
+| `Rol` | Single select | `Usuario` / `Soporte` / `Admin`. Toda cuenta nueva nace `Usuario` |
+| `Estado` | Single select | `Activa` / `Suspendida` / `Baja pedida` |
+| `Espacio usado (MB)` | Number (1 decimal) | Suma de lo que ocupa en S3. Contra `CUOTA_MB_POR_USUARIO` |
+| `Registrado en` | Date with time | |
 | `Ultimo acceso` | Date with time | |
 | `Dispositivos` | Link -> Dispositivos | |
-| `Proyectos` | Link -> Proyectos | Que proyectos puede descargar |
+| `Proyectos` | Link -> Proyectos | Los **suyos**, no los que le asignaron |
 
-**El password no vive aqui.** Igual que en `sirius_agro`, el login valida
-contra Sirius Nomina Core con un PAT de solo lectura y la app guarda un hash
-`bcrypt` local para poder entrar sin senal hasta `DIAS_MAX_OFFLINE`. Esta tabla
-es el registro de *quien usa GeoMaps*, no un almacen de credenciales.
+**Dos puertas, una fila.** Se entra con cuenta de Google o con correo y clave.
+Con Google, el backend verifica el ID token contra el JWKS publico y saca el
+`sub`. Con clave, compara contra `Hash clave`. En los dos casos el resultado es
+la misma fila y el mismo JWT de 30 dias.
+
+**Una cuenta no puede tener las dos.** El correo es unico y `Proveedor` dice
+cual manda. Registrarse con clave usando un correo que ya entra con Google
+responde 409 diciendo cual es la puerta correcta, y al reves tambien.
+
+**`Hash clave` no se mira ni se edita a mano.** Es bcrypt, no es reversible y
+no sirve de nada leerlo. Lo unico razonable que se puede hacer desde Airtable es
+borrarlo — lo que deja la cuenta sin poder entrar — o pegarle un hash nuevo
+generado a proposito, que es el procedimiento manual de "olvide mi clave"
+mientras no haya envio de correo.
+
+**`Correo verificado` todavia no controla nada.** Las cuentas de clave nacen en
+falso y siguen asi. El dia que algo dependa de este campo (avisos, recuperacion
+automatica), primero hay que construir el envio de correo.
+
+**El `Auth UID` es el `sub`, no el correo.** Alguien puede cambiar la direccion
+de su cuenta de Google y seguir siendo la misma persona; colgar los proyectos
+del correo haria que ese cambio le borre su trabajo de la vista.
+
+**Con Google, el registro no tiene formulario propio.** La primera vez que
+llega un `Auth UID` que no existe en esta tabla, el backend crea la fila:
+registrarse y entrar por primera vez son el mismo evento. Con clave si hay
+formulario, porque el nombre hay que preguntarlo — pero `POST /v1/registro`
+devuelve la sesion abierta, no un "ya te podes loguear": mandar a alguien a un
+segundo formulario desperdicia el unico rato con senal que va a tener ese dia.
+
+**`Rol` ya no reparte permisos sobre proyectos ajenos.** Antes, con nomina, un
+Coordinador veia el trabajo de todo el equipo. Con registro abierto eso seria
+un agujero: `Usuario` ve lo suyo y nada mas. `Soporte` y `Admin` son para
+operar el servicio, y quien los tenga puede leer datos de clientes — se asignan
+a mano en Airtable, nunca desde la app.
 
 ### `Dispositivos`
 
@@ -84,14 +123,21 @@ tiene el mapa nuevo en el telefono?* Sin esta tabla la respuesta es llamarlo.
 | `Municipio` | Single line text | |
 | `Centro lat` / `Centro lon` | Number (precision 6) | Donde abre el mapa |
 | `Estado` | Single select | `Activo` / `Cerrado` |
+| `Dueno Auth UID` | Single line text | **Quien puede ver esto.** Denormalizado a proposito: el filtro de aislamiento tiene que poder correr sin resolver un enlace |
 | `Mapas` | Link -> Mapas | |
 | `Trazados` | Link -> Trazados | |
-| `Usuarios` | Link -> Usuarios | |
+| `Dueno` | Link -> Usuarios | El mismo dato, para navegar la base a mano |
+
+`Dueno Auth UID` se repite como texto plano aunque ya exista el enlace `Dueno`.
+No es redundancia por descuido: `filterByFormula` sobre un campo de enlace en
+Airtable compara contra el *nombre* del registro, que puede cambiar. Comparar
+contra un UID literal es lo unico que no se rompe el dia que alguien edita su
+nombre de perfil.
 
 ### `Mapas`
 
-La ficha de una capa base offline. **El MBTiles no se adjunta**: se sube al
-bucket y aqui queda la URL.
+La ficha de una capa base offline. **El MBTiles no se adjunta**: se sube a S3 y
+aqui queda su llave.
 
 | Campo | Tipo | Nota |
 |---|---|---|
@@ -266,6 +312,45 @@ El bucket es **privado**. Nada se sirve publico:
 - Airtable recibe una prefirmada de lectura solo para los `Attachment`. Airtable
   **copia** el archivo a su propio almacenamiento al momento de escribir, asi
   que el adjunto sigue funcionando despues de que la URL expire.
+
+---
+
+## Aislamiento entre cuentas
+
+Con registro abierto, la base deja de ser de una sola empresa: guarda predios de
+gente que no se conoce entre si. **Airtable no tiene seguridad por fila.** El
+PAT ve la base entera, siempre.
+
+Lo unico que separa a un usuario de los linderos de otro es que ese PAT vive
+solo en el backend y que **el backend filtra por `Dueno Auth UID` en cada
+consulta**. Un solo endpoint que se olvide del filtro entrega datos ajenos.
+
+Por eso el filtro no se escribe a mano en cada servicio: sale de una sola
+funcion (`services/auth.py:formula_del_duenno`) y toda lectura pasa por ella.
+Es la clase de regla que no se sostiene con disciplina, se sostiene con que no
+haya otra forma de escribir la consulta.
+
+Los mismos dos cuidados que trae abrir el registro:
+
+- **Cuota por cuenta** (`CUOTA_MB_POR_USUARIO`). Registro abierto mas subida
+  libre a S3 es una factura de AWS pagada por cuenta ajena. El limite tiene que
+  existir antes que el primer abuso, no despues.
+
+  La verificacion de correo que haria falta con registro por contrasena aca no
+  aplica: Google ya entrega el correo verificado.
+
+## Baja de cuenta
+
+Si alguien pide borrar su cuenta hay que poder cumplirlo, y con esta estructura
+se puede porque todo cuelga del proyecto y el proyecto cuelga del `Auth UID`:
+
+1. Borrar en S3 cada prefijo `proyectos/<codigo>/` de sus proyectos.
+2. Borrar sus filas en Airtable, de las hojas a la raiz.
+3. Borrar su fila de `Usuarios`.
+
+El orden importa: borrar primero al usuario deja archivos en S3 sin forma de
+saber de quien eran. No hay que dar de baja nada en Google — la cuenta es de la
+persona, nosotros solo dejamos de reconocer su `sub`.
 
 ---
 

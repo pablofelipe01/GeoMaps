@@ -4,6 +4,7 @@
 /// tal cual como valor del Single select. Si alguien renombra una opcion en
 /// Airtable sin tocar esto, el upsert empieza a fallar con typecast: por eso
 /// el valor vive aca y no escrito a mano en cada servicio.
+library;
 
 enum TipoTrazado { ruta, poligono }
 

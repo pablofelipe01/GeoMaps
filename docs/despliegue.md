@@ -2,10 +2,11 @@
 
 ## Backend en Vercel
 
-La carpeta `backend/` se despliega sola. `pyproject.toml` ya trae el
-`[tool.vercel] entrypoint = "app/main.py"`: sin el, Vercel busca `main.py` en
-la raiz, lo carga suelto, y los imports relativos (`from .config import ...`)
-revientan al importarse fuera del paquete.
+La carpeta `backend/` se despliega sola. `pyproject.toml` usa la sintaxis
+correcta de Vercel: `[tool.vercel] entrypoint = "app.main:app"`. Esa forma
+le dice al runtime que importe el paquete `app.main` y el objeto `app` de
+FastAPI; sin ella, Vercel busca un modulo plano y los imports relativos
+(`from .config import ...`) se rompen fuera del paquete.
 
 ```bash
 cd backend
@@ -20,7 +21,46 @@ archivo. Las que no pueden faltar para que algo funcione:
 | `APP_API_KEY` | Todos los endpoints responden 401 |
 | `AIRTABLE_TOKEN` + `AIRTABLE_BASE_ID` | La sincronizacion falla; la app sigue trabajando offline |
 | `AWS_*` + `S3_BUCKET` | No se pueden subir archivos ni descargar mapas |
-| `NOMINA_TOKEN` + `NOMINA_BASE_ID` | Nadie puede hacer el primer login |
+| `GOOGLE_CLIENT_ID_WEB` + `JWT_SECRET` | Nadie puede entrar ni registrarse |
+
+## Google Sign-In: lo unico que hay que crear fuera de Airtable y AWS
+
+No es una plataforma nueva que haya que contratar ni pagar: es un proyecto en
+**Google Cloud Console**, gratis, y solo se usa para emitir client id de OAuth.
+Se hace una vez.
+
+1. Crear un proyecto en <https://console.cloud.google.com>.
+2. Configurar la **pantalla de consentimiento** de OAuth. Como el registro es
+   abierto, va en modo **External** y en `Publicada`. En modo `Testing` solo
+   entran hasta 100 correos cargados a mano, que es justo lo contrario de lo que
+   se busca.
+3. Crear **dos** client id en Credenciales:
+
+   | Tipo | Para que | Donde va |
+   |---|---|---|
+   | **Web** | Es el `aud` del ID token. La app lo manda como `serverClientId` | `GOOGLE_CLIENT_ID_WEB` en Vercel, y `GOOGLE_SERVER_CLIENT_ID` en el build del APK |
+   | **Android** | Liga la firma del APK a la cuenta | `GOOGLE_CLIENT_ID_ANDROID`. Pide el nombre del paquete y la huella **SHA-1** |
+
+**Los dos hacen falta, y es donde se pierde media tarde.** Sin el de tipo Web,
+`google_sign_in` en Android abre sesion pero **no devuelve `idToken`**, y el
+backend se queda sin nada que verificar: la app parece funcionar hasta que
+falla la llamada a `/v1/sesion`. Sin el de Android, el login muere con
+`ApiException: 10`, que no dice nada.
+
+### Las huellas SHA-1 son dos, no una
+
+```bash
+# Debug: la que usa `flutter run` en la maquina de cada quien
+keytool -list -v -alias androiddebugkey \
+  -keystore ~/.android/debug.keystore -storepass android
+
+# Release: la del keystore con el que se firma el APK que se distribuye
+keytool -list -v -alias <alias> -keystore <ruta>.jks
+```
+
+Las dos se registran en el client id de Android. El error clasico es cargar solo
+la de debug: el login anda perfecto en desarrollo y falla en el APK que recibe
+la gente.
 
 ## El worker de conversion
 

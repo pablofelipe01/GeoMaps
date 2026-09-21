@@ -15,7 +15,14 @@ dependencies = [
     "pydantic-settings==2.7.1",
     "httpx==0.28.1",
     "boto3>=1.35.0",
-    "bcrypt>=4.1.0",
+    # Verificar el ID token de Google contra su JWKS y firmar los JWT propios.
+    # `[crypto]` trae la RS256 que usa Google; sin eso solo hay HS256 y la
+    # verificacion del token de Google no se puede hacer.
+    "pyjwt[crypto]>=2.10.0",
+    # Hash de las contrasenas de la puerta de correo. Directo, sin passlib:
+    # passlib esta sin mantener desde 2020 y rompe con bcrypt 4.x por leerle un
+    # `__about__` que ya no existe. Una capa menos y un bug conocido menos.
+    "bcrypt>=4.2.0",
 ]
 
 [project.optional-dependencies]
@@ -37,4 +44,4 @@ build-backend = "hatchling.build"
 packages = ["app"]
 
 [tool.vercel]
-entrypoint = "app/main.py"
+entrypoint = "app.main:app"
