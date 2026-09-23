@@ -259,6 +259,17 @@ class SesionNotifier extends StateNotifier<EstadoSesion> {
     await _almacen.delete(key: _llaveSesion);
   }
 
+  /// El codigo de estado de Google dentro del mensaje del error.
+  ///
+  /// En debug llega como `ApiException: 10: `, pero en el APK de release R8
+  /// ofusca el nombre de la clase y llega como `s5.10: ` (la letra cambia en
+  /// cada build). Buscar el texto literal `ApiException` solo andaba en debug.
+  static int? _codigoGoogle(String texto) {
+    final m = RegExp(r'(?:ApiException: |\b[A-Za-z]\w{0,3}\.)(\d+):')
+        .firstMatch(texto);
+    return m == null ? null : int.tryParse(m.group(1)!);
+  }
+
   /// Traduce los errores crudos de Google a algo accionable.
   ///
   /// `ApiException: 10` es el mas comun y el mas mudo: significa que la huella
@@ -266,17 +277,17 @@ class SesionNotifier extends StateNotifier<EstadoSesion> {
   /// a la persona a reintentar veinte veces sin que nada cambie.
   String _traducir(Object e) {
     final texto = e.toString();
-    if (texto.contains('ApiException: 10')) {
+    final codigo = _codigoGoogle(texto);
+    if (codigo == 10) {
       return 'Google rechazo la app (error 10). La huella SHA-1 de este APK no '
           'esta registrada en Google Cloud. Es configuracion, no algo que se '
           'arregle reintentando.';
     }
-    if (texto.contains('ApiException: 7') ||
-        texto.contains('SocketException')) {
+    if (codigo == 7 || texto.contains('SocketException')) {
       return 'Sin conexion. El primer ingreso necesita red una sola vez; '
           'despues la app funciona un mes sin senal.';
     }
-    if (texto.contains('ApiException: 12501')) {
+    if (codigo == 12501) {
       return 'Se cancelo el ingreso.';
     }
     return texto.replaceFirst('Exception: ', '');
