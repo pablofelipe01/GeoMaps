@@ -6,6 +6,7 @@ import 'package:google_sign_in/google_sign_in.dart';
 
 import '../core/api_client.dart';
 import '../core/config.dart';
+import 'providers.dart' show versionLocalProvider;
 
 /// Quien esta usando la app.
 ///
@@ -49,17 +50,17 @@ class Sesion {
   });
 
   factory Sesion.deJson(Map<String, dynamic> j) => Sesion(
-        authUid: j['auth_uid'] as String,
-        codigoUsuario: j['codigo_usuario'] as String,
-        nombre: j['nombre'] as String,
-        correo: j['correo'] as String,
-        rol: j['rol'] as String? ?? 'Usuario',
-        // Las sesiones guardadas antes de que existiera la puerta de clave no
-        // traen este campo: todas eran de Google.
-        proveedor: j['proveedor'] as String? ?? 'Google',
-        foto: j['foto'] as String?,
-        venceEn: DateTime.parse(j['vence_en'] as String),
-      );
+    authUid: j['auth_uid'] as String,
+    codigoUsuario: j['codigo_usuario'] as String,
+    nombre: j['nombre'] as String,
+    correo: j['correo'] as String,
+    rol: j['rol'] as String? ?? 'Usuario',
+    // Las sesiones guardadas antes de que existiera la puerta de clave no
+    // traen este campo: todas eran de Google.
+    proveedor: j['proveedor'] as String? ?? 'Google',
+    foto: j['foto'] as String?,
+    venceEn: DateTime.parse(j['vence_en'] as String),
+  );
 
   final String authUid;
   final String codigoUsuario;
@@ -75,15 +76,15 @@ class Sesion {
   final DateTime venceEn;
 
   Map<String, dynamic> aJson() => {
-        'auth_uid': authUid,
-        'codigo_usuario': codigoUsuario,
-        'nombre': nombre,
-        'correo': correo,
-        'rol': rol,
-        'proveedor': proveedor,
-        'foto': foto,
-        'vence_en': venceEn.toIso8601String(),
-      };
+    'auth_uid': authUid,
+    'codigo_usuario': codigoUsuario,
+    'nombre': nombre,
+    'correo': correo,
+    'rol': rol,
+    'proveedor': proveedor,
+    'foto': foto,
+    'vence_en': venceEn.toIso8601String(),
+  };
 
   bool get vencida => DateTime.now().isAfter(venceEn);
 
@@ -139,13 +140,12 @@ class SesionNotifier extends StateNotifier<EstadoSesion> {
         state = const EstadoSesion();
         return;
       }
-      final sesion = Sesion.deJson(
-        jsonDecode(crudo) as Map<String, dynamic>,
-      );
+      final sesion = Sesion.deJson(jsonDecode(crudo) as Map<String, dynamic>);
       if (sesion.vencida) {
         await _limpiar();
         state = const EstadoSesion(
-          error: 'La sesion vencio. Busca senal y volve a entrar; el trabajo '
+          error:
+              'La sesion vencio. Busca senal y volve a entrar; el trabajo '
               'guardado en el telefono no se perdio.',
         );
         return;
@@ -201,10 +201,9 @@ class SesionNotifier extends StateNotifier<EstadoSesion> {
     required String nombre,
     required String correo,
     required String clave,
-  }) =>
-      _conFormulario(
-        () => _api.registrar(nombre: nombre, correo: correo, clave: clave),
-      );
+  }) => _conFormulario(
+    () => _api.registrar(nombre: nombre, correo: correo, clave: clave),
+  );
 
   /// El envoltorio de las dos puertas de clave: cargando, llamada, error.
   ///
@@ -272,7 +271,8 @@ class SesionNotifier extends StateNotifier<EstadoSesion> {
           'esta registrada en Google Cloud. Es configuracion, no algo que se '
           'arregle reintentando.';
     }
-    if (texto.contains('ApiException: 7') || texto.contains('SocketException')) {
+    if (texto.contains('ApiException: 7') ||
+        texto.contains('SocketException')) {
       return 'Sin conexion. El primer ingreso necesita red una sola vez; '
           'despues la app funciona un mes sin senal.';
     }
@@ -283,9 +283,10 @@ class SesionNotifier extends StateNotifier<EstadoSesion> {
   }
 }
 
-final apiProvider = Provider<ApiClient>((ref) => ApiClient());
+final apiProvider = Provider<ApiClient>(
+  (ref) => ApiClient(versionCode: ref.watch(versionLocalProvider)?.code),
+);
 
-final sesionProvider =
-    StateNotifierProvider<SesionNotifier, EstadoSesion>(
+final sesionProvider = StateNotifierProvider<SesionNotifier, EstadoSesion>(
   (ref) => SesionNotifier(ref.watch(apiProvider)),
 );

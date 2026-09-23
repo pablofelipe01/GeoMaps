@@ -78,6 +78,12 @@ class Settings(BaseSettings):
     s3_ttl_lectura: int = 86400
     s3_ttl_escritura: int = 3600
 
+    # --- Actualizaciones del APK -----------------------------------------
+    # El manifiesto de la version vigente. Lo escribe tools/publicar_apk.py y
+    # lo lee services/version_app.py. Los dias de gracia viajan adentro del
+    # manifiesto, asi que cambiarlos no pide redeploy.
+    s3_llave_manifiesto_app: str = "app/version.json"
+
 
 @lru_cache
 def get_settings() -> Settings:

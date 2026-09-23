@@ -1,0 +1,13 @@
+# Configuracion de drift_dev. Lo que importa aca es `databases` y `schema_dir`:
+# con eso `dart run drift_dev make-migrations` guarda el esquema de cada
+# version y genera las pruebas que verifican que una base vieja migra a la
+# nueva sin perder filas.
+targets:
+  $default:
+    builders:
+      drift_dev:
+        options:
+          databases:
+            geomaps: lib/data/db/app_database.dart
+          schema_dir: drift_schemas/
+          test_dir: test/drift/

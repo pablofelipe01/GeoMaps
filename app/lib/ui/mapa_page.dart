@@ -8,6 +8,9 @@ import 'package:latlong2/latlong.dart';
 
 import '../core/ubicacion.dart';
 import '../state/sesion.dart';
+import '../state/zona_guaicaramo.dart';
+import 'capa_parcelas.dart';
+import 'capa_vias.dart';
 
 /// La pantalla principal: el mapa.
 ///
@@ -21,7 +24,14 @@ import '../state/sesion.dart';
 /// deciden todo el proyecto: si `flutter_map` rinde con imagen satelital, y si
 /// el GPS entrega precision util bajo condiciones de campo.
 class MapaPage extends ConsumerStatefulWidget {
-  const MapaPage({super.key});
+  const MapaPage({this.archivoVias, this.archivoParcelas, super.key});
+
+  /// El asset de vias del predio que se esta abriendo, si es que abre uno.
+  /// Nulo es el mapa a secas: satelite o calles y la posicion propia.
+  final String? archivoVias;
+
+  /// El asset de lotes del predio (bloques y parcelas), si los tiene.
+  final String? archivoParcelas;
 
   @override
   ConsumerState<MapaPage> createState() => _MapaPageState();
@@ -40,6 +50,19 @@ class _MapaPageState extends ConsumerState<MapaPage> {
   bool _siguiendo = true;
 
   CapaBase _capa = CapaBase.satelite;
+
+  /// Las vias del predio se pueden apagar. Sobre un lote recien sembrado, las
+  /// lineas tapan justo lo que se fue a mirar.
+  bool _verVias = true;
+
+  /// Los linderos de los lotes, igual: se apagan para mirar el cultivo limpio.
+  bool _verParcelas = true;
+
+  /// El zoom y el area visible mandan sobre que rotulos se dibujan. Se guardan
+  /// aca porque el mapa los reporta por callback, no se pueden leer en el build
+  /// antes del primer cuadro.
+  double _zoom = 15;
+  LatLngBounds? _visible;
 
   @override
   void initState() {
@@ -76,6 +99,18 @@ class _MapaPageState extends ConsumerState<MapaPage> {
         ? null
         : LatLng(_posicion!.latitude, _posicion!.longitude);
 
+    // Las vias del predio, si esta pantalla abrio uno. Se leen del asset una
+    // sola vez por arranque y quedan en memoria.
+    final vias = widget.archivoVias == null
+        ? null
+        : ref.watch(viasPredioProvider(widget.archivoVias!)).valueOrNull;
+
+    final parcelas = widget.archivoParcelas == null
+        ? null
+        : ref
+              .watch(parcelasPredioProvider(widget.archivoParcelas!))
+              .valueOrNull;
+
     return Scaffold(
       body: Stack(
         children: [
@@ -86,8 +121,12 @@ class _MapaPageState extends ConsumerState<MapaPage> {
               // (0,0) haria creer que el GPS fallo.
               initialCenter: aqui ?? const LatLng(4.28, -72.89),
               initialZoom: 15,
-              onPositionChanged: (_, porGesto) {
-                if (porGesto && _siguiendo) setState(() => _siguiendo = false);
+              onPositionChanged: (camara, porGesto) {
+                setState(() {
+                  _zoom = camara.zoom;
+                  _visible = camara.visibleBounds;
+                  if (porGesto && _siguiendo) _siguiendo = false;
+                });
               },
             ),
             children: [
@@ -96,6 +135,24 @@ class _MapaPageState extends ConsumerState<MapaPage> {
                 userAgentPackageName: _capa.paquete,
                 maxNativeZoom: _capa.zoomMax,
               ),
+
+              // Orden de abajo hacia arriba: imagen, lotes, vias, posicion.
+              // Los linderos van primero porque son areas; una via encima de
+              // un lindero se ve, un lindero encima de una via lo borra.
+              if (parcelas != null && _verParcelas)
+                CapaParcelas(
+                  parcelas: parcelas,
+                  zoom: _zoom,
+                  visible: _visible,
+                ),
+
+              // Las vias van sobre la imagen y debajo del punto propio: saber
+              // donde estoy no lo puede tapar una linea.
+              if (vias != null && _verVias) CapaVias(vias: vias),
+
+              if (parcelas != null && _verParcelas)
+                RotulosBloque(parcelas: parcelas, zoom: _zoom),
+
               if (aqui != null) ...[
                 // El circulo de precision va SIEMPRE, debajo del punto.
                 CircleLayer(
@@ -124,6 +181,8 @@ class _MapaPageState extends ConsumerState<MapaPage> {
             ],
           ),
           _BarraEstado(posicion: _posicion, error: _error),
+          if (vias != null && _verVias)
+            const Positioned(left: 16, bottom: 32, child: LeyendaVias()),
           Positioned(
             right: 16,
             bottom: 32,
@@ -135,6 +194,29 @@ class _MapaPageState extends ConsumerState<MapaPage> {
                   tooltip: 'Mi cuenta',
                   child: const Icon(Icons.account_circle_outlined),
                 ),
+                if (parcelas != null) ...[
+                  const SizedBox(height: 12),
+                  FloatingActionButton.small(
+                    heroTag: 'parcelas',
+                    onPressed: () =>
+                        setState(() => _verParcelas = !_verParcelas),
+                    tooltip: _verParcelas
+                        ? 'Ocultar los lotes'
+                        : 'Ver los lotes (${parcelas.parcelas.length})',
+                    child: Icon(_verParcelas ? Icons.grid_on : Icons.grid_off),
+                  ),
+                ],
+                if (vias != null) ...[
+                  const SizedBox(height: 12),
+                  FloatingActionButton.small(
+                    heroTag: 'vias',
+                    onPressed: () => setState(() => _verVias = !_verVias),
+                    tooltip: _verVias
+                        ? 'Ocultar las vias del predio'
+                        : 'Ver las vias del predio (${vias.cuantas})',
+                    child: Icon(_verVias ? Icons.route : Icons.route_outlined),
+                  ),
+                ],
                 const SizedBox(height: 12),
                 FloatingActionButton.small(
                   heroTag: 'capa',
@@ -284,7 +366,8 @@ class _BarraEstado extends StatelessWidget {
       color = Colors.orange.shade800;
     } else {
       final p = posicion!;
-      texto = '${p.latitude.toStringAsFixed(6)}, '
+      texto =
+          '${p.latitude.toStringAsFixed(6)}, '
           '${p.longitude.toStringAsFixed(6)}   '
           '+/- ${p.accuracy.toStringAsFixed(0)} m';
       // El umbral no es cosmetico: por encima de 10 m el punto no sirve para

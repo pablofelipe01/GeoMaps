@@ -90,9 +90,7 @@ class _LoginPageState extends ConsumerState<LoginPage> {
                   const SizedBox(height: 20),
                   Text(
                     'GeoMaps',
-                    style: Theme.of(context)
-                        .textTheme
-                        .headlineMedium
+                    style: Theme.of(context).textTheme.headlineMedium
                         ?.copyWith(fontWeight: FontWeight.w700),
                   ),
                   const SizedBox(height: 6),
@@ -126,10 +124,9 @@ class _LoginPageState extends ConsumerState<LoginPage> {
                               labelText: 'Nombre',
                               prefixIcon: Icon(Icons.person_outline),
                             ),
-                            validator: (v) =>
-                                (v == null || v.trim().length < 2)
-                                    ? 'Escribi tu nombre.'
-                                    : null,
+                            validator: (v) => (v == null || v.trim().length < 2)
+                                ? 'Escribi tu nombre.'
+                                : null,
                           ),
                           const SizedBox(height: 14),
                         ],
@@ -185,7 +182,7 @@ class _LoginPageState extends ConsumerState<LoginPage> {
                             ),
                             helperText: _registrando
                                 ? 'Minimo 8 caracteres. Anotala: por ahora no '
-                                    'hay recuperacion automatica.'
+                                      'hay recuperacion automatica.'
                                 : null,
                             helperMaxLines: 3,
                           ),
@@ -217,7 +214,9 @@ class _LoginPageState extends ConsumerState<LoginPage> {
                             ? const SizedBox(
                                 height: 20,
                                 width: 20,
-                                child: CircularProgressIndicator(strokeWidth: 2),
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                ),
                               )
                             : Text(_registrando ? 'Crear cuenta' : 'Entrar'),
                       ),
@@ -289,8 +288,7 @@ class _LoginPageState extends ConsumerState<LoginPage> {
                           Expanded(
                             child: Text(
                               estado.error!,
-                              style:
-                                  TextStyle(color: colores.onErrorContainer),
+                              style: TextStyle(color: colores.onErrorContainer),
                             ),
                           ),
                         ],
@@ -332,8 +330,7 @@ class _SelectorModo extends StatelessWidget {
       ],
       selected: {registrando},
       showSelectedIcon: false,
-      onSelectionChanged:
-          habilitado ? (s) => alCambiar(s.first) : null,
+      onSelectionChanged: habilitado ? (s) => alCambiar(s.first) : null,
     );
   }
 }

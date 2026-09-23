@@ -89,6 +89,9 @@ dependencies:
   # --- Varios ------------------------------------------------------------
   intl: ^0.20.3
   uuid: ^4.6.0
+  package_info_plus: ^9.0.1
+  ota_update: ^7.1.0
+  crypto: ^3.0.7
 
 dev_dependencies:
   flutter_test:
@@ -106,6 +109,15 @@ flutter:
     # backend.
     - assets/semilla/proyectos.json
     - assets/semilla/simbolos.json
+
+    # Datos de predios: perimetro, vias y lotes. **Confidenciales**: no estan
+    # en el repositorio, que es publico, y se regeneran con los scripts de
+    # tools/ (ver assets/zonas/LEEME.md).
+    #
+    # Se declara la carpeta y no cada archivo a proposito: asi un clon sin los
+    # datos compila igual, y la app marca el mapa del predio como no disponible
+    # en vez de fallar al arrancar.
+    - assets/zonas/
 
     # TODO(marca): traer de sirius_agro los PNG/SVG de marca y las Museo Slab.
     # Mientras no esten, declararlos hace fallar el build antes de compilar.

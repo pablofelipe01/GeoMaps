@@ -1,8 +1,23 @@
+import java.io.FileInputStream
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     // The Flutter Gradle Plugin must be applied after the Android and Kotlin Gradle plugins.
     id("dev.flutter.flutter-gradle-plugin")
 }
+
+// La llave de release. Vive FUERA del repo (key.properties y el .jks estan en
+// .gitignore) y es la misma para siempre: Android solo instala un APK encima
+// de otro si los dos estan firmados con la misma llave. Con otra, la
+// actualizacion se rechaza y la unica salida es desinstalar, que borra la
+// base local con todo lo que no se sincronizo. Perderla es no poder
+// actualizar nunca mas. Ver docs/despliegue.md, "Firma del APK".
+val archivoFirma = rootProject.file("key.properties")
+val firma = Properties().apply {
+    if (archivoFirma.exists()) FileInputStream(archivoFirma).use { load(it) }
+}
+val hayFirma = archivoFirma.exists()
 
 android {
     namespace = "com.siriusregenerative.geomaps"
@@ -13,8 +28,16 @@ android {
     ndkVersion = flutter.ndkVersion
 
     compileOptions {
+        // Lo pide ota_update (el que baja e instala el APK nuevo).
+        isCoreLibraryDesugaringEnabled = true
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
+        // Lo pide ota_update, que usa APIs de java.time. Sin esto el build
+        // falla en checkDebugAarMetadata antes de compilar una sola clase.
+        // Hace falta porque minSdk es 24: de 26 en adelante esas APIs ya vienen
+        // en el sistema, pero bajar la compatibilidad a 26 dejaria afuera los
+        // telefonos de campo mas viejos, que es justo para quienes es la app.
+        isCoreLibraryDesugaringEnabled = true
     }
 
     defaultConfig {
@@ -34,13 +57,41 @@ android {
         versionName = flutter.versionName
     }
 
-    buildTypes {
-        release {
-            // TODO: Add your own signing config for the release build.
-            // Signing with the debug keys for now, so `flutter run --release` works.
-            signingConfig = signingConfigs.getByName("debug")
+    signingConfigs {
+        create("release") {
+            if (hayFirma) {
+                keyAlias = firma.getProperty("keyAlias")
+                keyPassword = firma.getProperty("keyPassword")
+                storeFile = file(firma.getProperty("storeFile"))
+                storePassword = firma.getProperty("storePassword")
+            }
         }
     }
+
+    buildTypes {
+        release {
+            // Sin key.properties se firma con la de debug para que
+            // `flutter run --release` ande en cualquier maquina. Ese APK NO se
+            // reparte: tools/publicar_apk.py se niega a publicarlo.
+            signingConfig = if (hayFirma) {
+                signingConfigs.getByName("release")
+            } else {
+                logger.warn(
+                    "GeoMaps: falta android/key.properties. El APK de release " +
+                        "sale firmado con la llave de DEBUG y no sirve para repartir.",
+                )
+                signingConfigs.getByName("debug")
+            }
+        }
+    }
+}
+
+dependencies {
+    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.4")
+}
+
+dependencies {
+    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.4")
 }
 
 kotlin {

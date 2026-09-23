@@ -74,10 +74,15 @@ uvicorn app.main:app --reload --port 8000
 cd app
 flutter pub get
 dart run build_runner build --delete-conflicting-outputs   # genera drift
-flutter run --dart-define=API_BASE=http://10.0.2.2:8000
+flutter run --dart-define-from-file=dart_defines.json
 ```
 
-`10.0.2.2` es como el emulador de Android ve el `localhost` de la maquina.
+Por defecto la app apunta al backend desplegado:
+`https://geo-maps-seven.vercel.app`. Para trabajar contra el backend local se
+cambia `API_BASE` en `dart_defines.json` (o se pasa
+`--dart-define=API_BASE=http://10.0.2.2:8000`); `10.0.2.2` es como el emulador
+de Android ve el `localhost` de la maquina, y un celular fisico por USB usa
+`http://127.0.0.1:8000` con `adb reverse tcp:8000 tcp:8000`.
 
 ## Estado
 

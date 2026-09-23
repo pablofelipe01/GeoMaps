@@ -29,7 +29,8 @@ class PuntoGeo {
 double distanciaM(PuntoGeo a, PuntoGeo b) {
   final dLat = _rad(b.latitud - a.latitud);
   final dLon = _rad(b.longitud - a.longitud);
-  final h = math.sin(dLat / 2) * math.sin(dLat / 2) +
+  final h =
+      math.sin(dLat / 2) * math.sin(dLat / 2) +
       math.cos(_rad(a.latitud)) *
           math.cos(_rad(b.latitud)) *
           math.sin(dLon / 2) *

@@ -1,4 +1,3 @@
-
 /// GeoJSON: el formato en que el trazado sale del telefono y vive en S3.
 ///
 /// Se eligio sobre KML como formato de **almacenamiento** (KML sigue siendo un

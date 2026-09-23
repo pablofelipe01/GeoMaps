@@ -94,6 +94,60 @@ Para distribuir sin Play Store, que es lo que corresponde a una app interna, el
 APK se sube a un enlace privado. Los telefonos necesitan permitir instalacion
 de origenes desconocidos una sola vez.
 
+### Firma del APK: antes de repartir la primera version
+
+Android solo instala un APK **encima** de otro (conservando la base local,
+las preferencias y la sesion) si los dos estan firmados con la misma llave. La
+llave de debug es distinta en cada maquina: un APK firmado con ella no se puede
+actualizar desde otro computador, y la unica salida es desinstalar, que borra
+lo que no se sincronizo.
+
+Se crea **una vez**, fuera del repo, y se guarda con copia de respaldo (gestor
+de claves del equipo + un segundo lugar). Si se pierde, no se puede volver a
+publicar una actualizacion que los telefonos acepten.
+
+```bash
+keytool -genkey -v -keystore C:/Users/<usuario>/llaves/geomaps-release.jks   -keyalg RSA -keysize 4096 -validity 36500 -alias geomaps
+```
+
+Despues copiar `app/android/key.properties.example` a `app/android/key.properties`
+y llenarlo. Y registrar la **SHA-1 de esta llave** en el client id de Android
+de Google Cloud (ver arriba), o el login con Google falla con error 10 en el
+APK firmado.
+
+### Publicar una actualizacion
+
+1. Subir la version en `app/pubspec.yaml`: `version: 0.2.0+2`. El `+N` es el
+   versionCode y tiene que crecer siempre.
+2. Si cambio alguna tabla: subir `schemaVersion` y escribir la migracion (ver
+   `AppDatabase.migration`). Una migracion que falla deja la app sin abrir.
+3. Publicar:
+
+   ```bash
+   backend/.venv/Scripts/python tools/publicar_apk.py --notas "Mapas nuevos de ..."
+   ```
+
+   Compila, verifica que la firma sea la de release y la misma que la version
+   anterior, sube el APK a `app/` del bucket y despues `app/version.json`.
+   Con `--simular` muestra el manifiesto sin subir nada.
+
+Desde ahi:
+
+| Cuando | Que ve quien tiene una version vieja |
+|---|---|
+| Dias 0 a 9 | Aviso naranja en el inicio: "deja de funcionar en N dias", con boton Actualizar |
+| Dia 10 en adelante | Pantalla de bloqueo. Solo puede actualizar |
+| Con `--critica` | Bloqueo inmediato. Solo para un bug que corrompe datos |
+
+El bloqueo llega aunque no haya senal: la app guarda el manifiesto la ultima
+vez que tuvo red y cuenta los dias sola. Tambien lo aplica el backend: una
+version bloqueada recibe **426** en todo menos `/v1/version`, asi que no puede
+sincronizar con un formato viejo aunque se salte el chequeo. Lo que tenia sin
+subir queda en el telefono y se sincroniza desde la version nueva.
+
+La primera vez que alguien actualiza, Android le pide permitir "instalar
+apps de esta fuente" para GeoMaps. Es un permiso por app y se da una sola vez.
+
 ### Permisos que Android va a pedir
 
 | Permiso | Para que | Cuando se pide |

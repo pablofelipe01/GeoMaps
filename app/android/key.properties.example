@@ -1,0 +1,7 @@
+# PLANTILLA. Copiar a android/key.properties (que esta en .gitignore) y llenar.
+# El .jks va FUERA del repo, con copia de respaldo: sin esta llave no se puede
+# volver a publicar una actualizacion que los telefonos acepten.
+storeFile=C:/Users/<usuario>/llaves/geomaps-release.jks
+storePassword=
+keyAlias=geomaps
+keyPassword=

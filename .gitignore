@@ -59,3 +59,24 @@ backend/.pytest_cache/
 *.tif
 *.kmz
 tools/salida/
+
+# --- Datos de predios de clientes -------------------------------------------
+#
+# CONFIDENCIAL. Los linderos, las vias y los lotes de un predio son informacion
+# del cliente, no nuestra: dicen donde estan sus cultivos, por donde se entra y
+# cuanto tiene sembrado. Este repositorio es publico, asi que estos archivos
+# **no se versionan nunca**.
+#
+# Se regeneran desde el plano y el KMZ del cliente con los scripts de tools/.
+# Quien necesite compilar la app con los datos reales pide las fuentes a
+# coordinacion y corre los scripts; sin ellos la app compila igual y el mapa
+# del predio queda no disponible.
+app/assets/zonas/*.json
+
+# Los archivos fuente de los que salen, por si alguien los deja en el repo
+# mientras trabaja.
+*.kmz
+*.kml
+Acopios*.pdf
+vias*.geojson
+acopios*.geojson

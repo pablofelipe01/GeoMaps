@@ -5,11 +5,13 @@
 /// eso aca no hay ni un token de Airtable ni una llave del bucket, solo la URL
 /// del backend y la llave propia de la app.
 class Config {
-  /// URL del backend. En el emulador de Android el localhost de la maquina es
-  /// 10.0.2.2, no 127.0.0.1.
+  /// URL del backend. Por defecto apunta al despliegue de produccion, asi un
+  /// APK compilado sin dart-define igual habla con el servidor real. Para
+  /// desarrollo contra un backend local se pasa API_BASE: en el emulador de
+  /// Android el localhost de la maquina es 10.0.2.2, no 127.0.0.1.
   static const apiBase = String.fromEnvironment(
     'API_BASE',
-    defaultValue: 'http://10.0.2.2:8000',
+    defaultValue: 'https://geo-maps-seven.vercel.app',
   );
 
   /// Viaja en el header X-API-Key. No identifica al usuario, solo dice que
@@ -27,6 +29,7 @@ class Config {
   /// idToken, y sin idToken el backend no tiene nada que verificar. No es
   /// secreto, pero se pasa por dart-define para no tener que recompilar el
   /// codigo al cambiar de proyecto de Google.
-  static const googleServerClientId =
-      String.fromEnvironment('GOOGLE_SERVER_CLIENT_ID');
+  static const googleServerClientId = String.fromEnvironment(
+    'GOOGLE_SERVER_CLIENT_ID',
+  );
 }

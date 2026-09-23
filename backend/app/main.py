@@ -18,6 +18,13 @@ Lo que este backend hace y lo que no:
 
 Las tres devuelven exactamente el mismo `EntrarResponse`. La app tiene dos
 formularios antes del login y un solo camino despues.
+
+## Versiones de la app
+
+Toda llamada de la app trae `X-App-Version` (el versionCode del APK). Si esa
+version ya esta bloqueada, el middleware responde 426 antes de llegar al
+endpoint. `GET /v1/version` dice cual es la vigente y de donde bajarla; ver
+`services/version_app.py`.
 """
 
 from __future__ import annotations
@@ -25,13 +32,46 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timezone
 
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import Depends, FastAPI, Header, HTTPException, Request
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from .config import Settings, get_settings
-from .services import airtable, auth
+from .services import airtable, almacenamiento, auth, version_app
 
 app = FastAPI(title="GeoMaps API", version="0.1.0")
+
+# Lo que responde aunque la version del telefono este bloqueada: el ping, y la
+# consulta de version, que es justo lo que una app bloqueada necesita para
+# salir del bloqueo.
+_RUTAS_SIN_CHEQUEO_DE_VERSION = {"/health", "/v1/version", "/docs", "/openapi.json"}
+
+
+@app.middleware("http")
+async def rechazar_versiones_bloqueadas(request: Request, call_next):
+    """426 a una version del APK que ya paso su plazo.
+
+    La app se bloquea sola con la misma regla, pero no se le cree: una version
+    vieja que no se entero (o a la que le atrasaron el reloj) no puede subir
+    datos con un formato que el backend ya no espera. Sin cabecera se deja
+    pasar: son curl, pruebas y herramientas, no telefonos.
+    """
+    version = version_app.version_de_header(request.headers.get("x-app-version"))
+    if version is not None and request.url.path not in _RUTAS_SIN_CHEQUEO_DE_VERSION:
+        manifiesto = await version_app.manifiesto_vigente(get_settings())
+        if manifiesto and (
+            version_app.evaluar(version, manifiesto, datetime.now(timezone.utc))
+            == "bloqueada"
+        ):
+            return JSONResponse(
+                status_code=426,
+                content={
+                    "detail": "Esta version de GeoMaps ya no se puede usar. "
+                    f"Actualiza a la {manifiesto.version_nombre} desde la app; "
+                    "lo que tenes guardado en el telefono no se pierde."
+                },
+            )
+    return await call_next(request)
 
 
 @app.get("/health")
@@ -355,6 +395,66 @@ async def _anotar_intento_fallido(settings: Settings, campos: dict) -> None:
         )
     except Exception:  # noqa: BLE001
         pass
+
+
+class VersionResponse(BaseModel):
+    """Lo que la app necesita para decidir si se bloquea, y para bajar el APK.
+
+    `estado` es la regla aplicada a la version que mando el telefono; la app
+    la vuelve a aplicar por su cuenta con `minima` y `bloquea_en` cuando no
+    tiene red. `ahora` es la hora del servidor: con ella la app se protege de
+    un reloj atrasado a mano para esquivar el bloqueo.
+    """
+
+    publicada: bool
+    estado: version_app.Estado | None = None
+    version_code: int | None = None
+    version_nombre: str | None = None
+    minima: int | None = None
+    bloquea_en: datetime | None = None
+    notas: str | None = None
+    tamano_bytes: int | None = None
+    sha256: str | None = None
+    apk_url: str | None = None
+    ahora: datetime
+
+
+@app.get("/v1/version", response_model=VersionResponse)
+async def version(
+    x_app_version: str | None = Header(default=None),
+    _: None = Depends(auth.verificar_api_key),
+) -> VersionResponse:
+    """La version vigente del APK. No pide sesion: una app bloqueada o con la
+    sesion vencida igual tiene que poder actualizarse."""
+    settings = get_settings()
+    ahora = datetime.now(timezone.utc)
+    manifiesto = await version_app.manifiesto_vigente(settings)
+    if manifiesto is None:
+        return VersionResponse(publicada=False, ahora=ahora)
+
+    local = version_app.version_de_header(x_app_version)
+    try:
+        # Prefirmada y no publica: el bucket es privado. Firmarla es local, no
+        # cuesta una llamada a AWS.
+        apk_url = almacenamiento.url_lectura(settings, manifiesto.llave_apk)
+    except Exception:  # noqa: BLE001
+        apk_url = None
+
+    return VersionResponse(
+        publicada=True,
+        estado=(
+            version_app.evaluar(local, manifiesto, ahora) if local is not None else None
+        ),
+        version_code=manifiesto.version_code,
+        version_nombre=manifiesto.version_nombre,
+        minima=manifiesto.minima,
+        bloquea_en=manifiesto.bloquea_en,
+        notas=manifiesto.notas,
+        tamano_bytes=manifiesto.tamano_bytes,
+        sha256=manifiesto.sha256,
+        apk_url=apk_url,
+        ahora=ahora,
+    )
 
 
 @app.get("/v1/yo")
