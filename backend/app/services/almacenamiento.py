@@ -131,3 +131,32 @@ def llave_geometria(codigo_proyecto: str, codigo_trazado: str) -> str:
     separado, el dia que cambie el prefijo quedan filas apuntando al vacio.
     """
     return f"proyectos/{codigo_proyecto}/geometrias/{codigo_trazado}.geojson"
+
+
+def llave_mapa(codigo_proyecto: str, codigo_mapa: str) -> str:
+    """El MBTiles que descarga el telefono."""
+    return f"proyectos/{codigo_proyecto}/mapas/{codigo_mapa}.mbtiles"
+
+
+def llave_mapa_original(
+    codigo_proyecto: str, codigo_mapa: str, extension: str
+) -> str:
+    """El archivo tal como lo mando topografia.
+
+    Se conserva para poder reconvertir con otros parametros -mas DPI, otro
+    remuestreo- sin volver a pedirselo a nadie. La extension viaja como
+    parametro porque el original puede ser PDF, TIFF o KMZ y perderla obliga a
+    adivinar el formato al releerlo.
+    """
+    ext = extension.lower().lstrip(".")
+    return f"proyectos/{codigo_proyecto}/mapas/originales/{codigo_mapa}.{ext}"
+
+
+def llave_miniatura_mapa(codigo_proyecto: str, codigo_mapa: str) -> str:
+    """La imagen chica que Airtable copia al campo `Miniatura`.
+
+    Vive en S3 y no solo en Airtable porque Airtable guarda una copia, no el
+    original: si alguien borra el adjunto, sin esto habria que reconvertir el
+    mapa entero para recuperar una imagen de 40 KB.
+    """
+    return f"proyectos/{codigo_proyecto}/mapas/miniaturas/{codigo_mapa}.png"

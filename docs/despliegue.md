@@ -70,13 +70,18 @@ serverless.
 
 Opciones, de menor a mayor esfuerzo:
 
-1. **A mano**, con los comandos de `tools/README.md`. Es lo razonable mientras
-   sean unos pocos mapas al mes, que es el caso hoy.
+1. **A mano**, con `tools/convertir_mapa.py`, que hace la conversion, la
+   subida y la ficha de Airtable en un comando (ver `tools/README.md`). Es lo
+   razonable mientras sean unos pocos mapas al mes, que es el caso hoy.
 2. Un contenedor con `osgeo/gdal` en cualquier VM, leyendo una cola.
 
 Mientras sea (1), el endpoint `POST /v1/mapas` guarda el original en el bucket
 y deja el registro en `Procesando`. Alguien corre GDAL, sube el MBTiles y
 marca `Listo`. La app no ve diferencia: para ella un mapa esta listo o no.
+
+Hoy `convertir_mapa.py` hace el camino completo desde el archivo local, sin
+pasar por ese endpoint: nace directamente en `Listo`. Es el mismo resultado
+para la app.
 
 ## APK
 

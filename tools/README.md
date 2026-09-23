@@ -10,14 +10,49 @@ cuando el archivo es demasiado grande para pasar por el endpoint.
 
 ## Requisito
 
-GDAL 3.8+ con soporte de PDF. En Windows, lo mas simple es conda:
+GDAL 3.8+ **con soporte de PDF**: el driver no viene en todas las
+compilaciones. Si ya tienes QGIS instalado, no hace falta nada mas -lo trae
+completo, y `convertir_mapa.py` lo encuentra solo-. Si no:
 
 ```bash
 conda install -c conda-forge gdal
 gdalinfo --formats | grep -i pdf     # tiene que aparecer PDF
 ```
 
-## GeoPDF -> MBTiles
+## La forma corta: convertir_mapa.py
+
+Hace las cuatro pasadas de abajo, sube el MBTiles y el original al bucket y
+deja la ficha en la tabla `Mapas` en `Listo`. Desde ahi la app lo ve en el
+catalogo del proyecto.
+
+```bash
+backend/.venv/Scripts/python tools/convertir_mapa.py "plano.pdf"     --proyecto <codigo del proyecto> --nombre "Acopios 2026"
+```
+
+Con `--simular` convierte y mide sin subir ni tocar Airtable: es la forma de
+probar un DPI antes de gastar el ancho de banda.
+
+**El DPI es la unica decision irreversible**, porque es el detalle que va a
+existir para siempre en las teselas. Un plano del predio de Guaicaramo
+(36 x 24 km, carta doble) da:
+
+| `--dpi` | Zoom maximo | Pesa |
+|---|---|---|
+| 150 | 13 | 1,2 MB |
+| 300 | 14 | 3,2 MB |
+| 600 | 15 | 8,2 MB |
+
+Zoom 15 son unos 3 m por pixel: alcanza para leer los rotulos de bloque, no
+para distinguir dos palmas. Subir el DPI cuesta el cuadrado en peso, asi que
+600 es el techo razonable para un plano de predio completo.
+
+`--zoom-max N` corta por arriba cuando el archivo da mas detalle del que hace
+falta. No se le pide al driver de MBTiles -no tiene esa opcion y la ignora en
+silencio-: se impone remuestreando a los metros por pixel de ese nivel.
+
+## Las cuatro pasadas, a mano
+
+Lo que hace el script. Sirve para depurar un archivo raro.
 
 ```bash
 # 1. Ver que trae el archivo. Lo que se busca es el SRC y si tiene capas.
@@ -30,10 +65,12 @@ gdal_translate -of GTiff --config GDAL_PDF_DPI 300 entrada.pdf paso1.tif
 
 # 3. Reproyectar. -s_srs SOLO si el archivo no declara el suyo; si lo declara,
 #    forzarlo a mano es como se corren los mapas unos cientos de metros.
-gdalwarp -t_srs EPSG:3857 -r bilinear paso1.tif paso2.tif
+#    -dstalpha porque el plano queda girado al reproyectar: sin banda alfa las
+#    esquinas que sobran se rellenan de negro, y esto va ENCIMA del satelital.
+gdalwarp -t_srs EPSG:3857 -r bilinear -dstalpha paso1.tif paso2.tif
 
 # 4. Cortar la piramide y empacar en MBTiles.
-gdal_translate -of MBTILES paso2.tif salida/mapa.mbtiles
+gdal_translate -of MBTILES -co TYPE=overlay paso2.tif salida/mapa.mbtiles
 gdaladdo -r average salida/mapa.mbtiles 2 4 8 16 32
 ```
 

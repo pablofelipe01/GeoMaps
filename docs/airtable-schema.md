@@ -284,6 +284,7 @@ s3://sirius-geomaps/
   proyectos/<codigo proyecto>/
     mapas/<codigo mapa>.mbtiles
     mapas/originales/<codigo mapa>.pdf
+    mapas/miniaturas/<codigo mapa>.png
     geometrias/<codigo trazado>.geojson
     kml/<nombre>.kml
     gpx/<nombre>.gpx

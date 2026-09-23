@@ -135,6 +135,9 @@ class PanelRuta extends StatelessWidget {
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
+                // Sin esto la columna se estira a todo el alto que le ofrece
+                // el Stack y la tarjeta tapa el mapa entero.
+                mainAxisSize: MainAxisSize.min,
                 children: [
                   Text(
                     '${formatearDistancia(restantes)}  ·  ${formatearMinutos(minutos)}',
