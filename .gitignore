@@ -80,3 +80,7 @@ app/assets/zonas/*.json
 Acopios*.pdf
 vias*.geojson
 acopios*.geojson
+
+# APKs compilados para repartir. Viven en el bucket, no en git.
+dist/
+*.apk

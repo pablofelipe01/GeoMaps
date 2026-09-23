@@ -1,6 +1,7 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../core/parcelas.dart';
+import '../core/ruteo.dart';
 import '../core/vias.dart';
 import '../core/zona.dart';
 import 'ubicacion_provider.dart';
@@ -132,4 +133,21 @@ final parcelasPredioProvider = FutureProvider.family<ParcelasPredio, String>((
   archivo,
 ) {
   return ParcelasPredio.cargar(archivo);
+});
+
+/// La red vial ruteable de un predio: el grafo que responde "por donde se llega
+/// manejando hasta este punto".
+///
+/// Se arma sobre las vias ya cargadas, asi que no vuelve a leer el asset.
+/// Armarlo cuesta unas decimas de segundo -son 12.000 cruces- y por eso este
+/// provider **no se mira al abrir el mapa**: se pide recien cuando alguien
+/// marca su primer destino, que es un momento en el que la pantalla ya esta
+/// diciendo "calculando". Despues queda en memoria y las rutas siguientes
+/// salen en milisegundos.
+final redVialProvider = FutureProvider.family<RedVial, String>((
+  ref,
+  archivo,
+) async {
+  final vias = await ref.watch(viasPredioProvider(archivo).future);
+  return RedVial.construir(vias);
 });

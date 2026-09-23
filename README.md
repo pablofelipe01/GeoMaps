@@ -17,12 +17,15 @@ Un tecnico en un potrero de Guaicaramo, sin datos, tiene que:
 
 1. **Ver el plano del predio** que le mando topografia, no un mapa generico.
 2. **Verse a si mismo** sobre ese plano, con la precision del GPS a la vista.
-3. **Marcar** puntos (waypoints), **grabar** por donde camino (trazado) y
+3. **Llegar** hasta un punto: marca el destino en el mapa y la app traza por
+   donde se va **por las vias del predio**, no en linea recta, y la recalcula
+   sola si agarro otro camino.
+4. **Marcar** puntos (waypoints), **grabar** por donde camino (trazado) y
    **medir** el area de un lote.
-4. **Entregar** eso como KML/GPX que abra Google Earth o QGIS, y como PDF.
-5. Que todo eso **aparezca en Airtable** cuando el telefono vuelva a tener red.
+5. **Entregar** eso como KML/GPX que abra Google Earth o QGIS, y como PDF.
+6. Que todo eso **aparezca en Airtable** cuando el telefono vuelva a tener red.
 
-Los pasos 1-4 funcionan en modo avion. El 5 es el unico que necesita senal, y
+Los pasos 1-5 funcionan en modo avion. El 6 es el unico que necesita senal, y
 la app nunca lo espera: el dato se guarda local primero y se sincroniza despues.
 
 ## Stack
@@ -36,6 +39,7 @@ la app nunca lo espera: el dato se guarda local primero y se sincroniza despues.
 | BD local | **Drift / SQLite** | Waypoints, trazados y el catalogo de capas. Fuente de verdad mientras no hay red |
 | GPS | **geolocator + flutter_foreground_task** | El trazado sigue grabando con la pantalla apagada |
 | Geometria | `core/geo.dart` | Haversine y area sobre WGS84, portado de `sirius_agro` |
+| Ruteo | `core/ruteo.dart` | Grafo y Dijkstra sobre las vias del predio, adentro del telefono: en Guaicaramo no hay senal para consultarle la ruta a nadie, y ningun servicio de ruteo conoce las vias internas de una plantacion |
 | Export | `core/kml.dart`, `core/gpx.dart` | KML 2.2 y GPX 1.1 escritos a mano; son XML plano |
 | PDF | **pdf + printing** | Entregable impreso con la marca Sirius |
 | Identidad | **Correo + clave, o Google Sign-In** | Registro abierto por dos puertas. El backend verifica el ID token contra el JWKS de Google, o la clave contra un hash bcrypt, y guarda al usuario en Airtable: ningun proveedor de identidad extra. La puerta de clave existe porque Google Sign-In depende de los servicios de Google Play, que en los telefonos de campo no siempre estan sanos |

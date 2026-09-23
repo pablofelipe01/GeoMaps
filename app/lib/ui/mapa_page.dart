@@ -6,10 +6,12 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:latlong2/latlong.dart';
 
+import '../core/ruteo.dart';
 import '../core/ubicacion.dart';
 import '../state/sesion.dart';
 import '../state/zona_guaicaramo.dart';
 import 'capa_parcelas.dart';
+import 'capa_ruta.dart';
 import 'capa_vias.dart';
 
 /// La pantalla principal: el mapa.
@@ -58,6 +60,24 @@ class _MapaPageState extends ConsumerState<MapaPage> {
   /// Los linderos de los lotes, igual: se apagan para mirar el cultivo limpio.
   bool _verParcelas = true;
 
+  /// El punto que se marco en el mapa, y la ruta por via hasta el.
+  ///
+  /// Viven en la pantalla y no en un provider porque no sobreviven a salir del
+  /// mapa: una ruta calculada hace media hora, desde donde estaba antes, no
+  /// sirve. Se vuelve a marcar el punto y listo.
+  LatLng? _destino;
+  Ruta? _ruta;
+  ProgresoRuta? _progreso;
+  bool _calculando = false;
+
+  /// Para descartar el resultado de un calculo que quedo viejo: si alguien
+  /// marca otro destino mientras se arma el grafo, el primero no puede pisar
+  /// al segundo al terminar.
+  int _calculo = 0;
+
+  /// La pista de "manten pulsado" se muestra hasta que se usa una vez.
+  bool _pistaVista = false;
+
   /// El zoom y el area visible mandan sobre que rotulos se dibujan. Se guardan
   /// aca porque el mapa los reporta por callback, no se pueden leer en el build
   /// antes del primer cuadro.
@@ -90,7 +110,139 @@ class _MapaPageState extends ConsumerState<MapaPage> {
       if (_siguiendo) {
         _mapa.move(LatLng(p.latitude, p.longitude), _mapa.camera.zoom);
       }
+      _revisarRuta(p);
     });
+  }
+
+  /// Marca un destino en el mapa y traza la ruta por via hasta el.
+  ///
+  /// El gesto es mantener pulsado y no un toque simple: sobre un mapa, el toque
+  /// simple es lo que uno hace sin querer mientras arrastra, y poner un destino
+  /// cada vez que alguien roza la pantalla vuelve el mapa inusable.
+  void _fijarDestino(LatLng punto) {
+    setState(() {
+      _destino = punto;
+      _ruta = null;
+      _progreso = null;
+      _pistaVista = true;
+    });
+    _calcularRuta(porDesvio: false);
+  }
+
+  void _quitarRuta() {
+    setState(() {
+      _destino = null;
+      _ruta = null;
+      _progreso = null;
+      _calculando = false;
+      _calculo++;
+    });
+  }
+
+  /// Calcula -o recalcula- la ruta desde donde se esta parado ahora.
+  ///
+  /// Siempre desde la posicion actual y no desde donde se marco el destino: eso
+  /// es lo que hace que recalcular sirva de algo cuando alguien agarro otro
+  /// camino.
+  Future<void> _calcularRuta({
+    required bool porDesvio,
+    bool avisar = true,
+  }) async {
+    final archivo = widget.archivoVias;
+    final destino = _destino;
+    if (archivo == null || destino == null) return;
+
+    if (_posicion == null) {
+      if (avisar) {
+        _avisar(
+          'Sin senal de GPS todavia no hay desde donde trazar la ruta. '
+          'Sali a cielo abierto y volve a marcar el punto.',
+        );
+      }
+      return;
+    }
+
+    final mio = ++_calculo;
+    setState(() => _calculando = true);
+
+    try {
+      // La primera vez esto arma el grafo de las vias, que cuesta unas decimas
+      // de segundo. De ahi en mas ya esta en memoria y vuelve al instante.
+      final red = await ref.read(redVialProvider(archivo).future);
+      if (!mounted || mio != _calculo) return;
+
+      // La posicion se vuelve a leer despues del await: mientras se armaba el
+      // grafo pudo entrar otro fix, y rutear desde el anterior deja la ruta
+      // naciendo unos metros atras.
+      final p = _posicion;
+      if (p == null) return;
+      final desde = LatLng(p.latitude, p.longitude);
+
+      final ruta = red.ruta(desde: desde, hasta: destino);
+      if (!mounted || mio != _calculo) return;
+
+      setState(() {
+        _ruta = ruta;
+        _progreso = ruta?.progreso(desde);
+        _calculando = false;
+      });
+
+      if (ruta == null && avisar) {
+        _avisar(
+          porDesvio
+              ? 'Desde aca no hay ruta por las vias del predio hasta el punto '
+                    'marcado.'
+              : 'No hay ruta por via hasta ese punto: o queda lejos de toda '
+                    'via del predio, o esta en un sector que no se comunica '
+                    'por adentro.',
+        );
+      }
+    } catch (_) {
+      if (!mounted || mio != _calculo) return;
+      setState(() => _calculando = false);
+      // Sin las vias del predio no hay ruteo posible; el mapa sigue andando.
+      if (avisar) {
+        _avisar('No se pudieron leer las vias del predio para trazar la ruta.');
+      }
+    }
+  }
+
+  /// Con cada fix: cuanto falta, si llego, y si hay que recalcular.
+  void _revisarRuta(Position p) {
+    final ruta = _ruta;
+    if (ruta == null) {
+      // Hay un destino marcado pero no se pudo trazar ruta desde donde se
+      // estaba: lejos de toda via, o sin fix todavia. Se reintenta callado con
+      // cada posicion nueva -doscientos metros pueden ser justo lo que
+      // faltaba-, en vez de obligar a marcar el punto de nuevo.
+      if (_destino != null && !_calculando) {
+        _calcularRuta(porDesvio: false, avisar: false);
+      }
+      return;
+    }
+
+    final progreso = ruta.progreso(LatLng(p.latitude, p.longitude));
+    setState(() => _progreso = progreso);
+
+    if (progreso.llego) {
+      _quitarRuta();
+      _avisar('Llegaste al punto marcado.');
+      return;
+    }
+
+    // El umbral se compara contra la precision del fix adentro de
+    // `hayQueRecalcular`: con el GPS saltando bajo palma, un desvio aparente no
+    // puede cambiar la ruta que alguien esta siguiendo.
+    if (!_calculando && progreso.hayQueRecalcular(p.accuracy)) {
+      _calcularRuta(porDesvio: true);
+    }
+  }
+
+  void _avisar(String texto) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(texto), duration: const Duration(seconds: 5)),
+    );
   }
 
   @override
@@ -111,6 +263,11 @@ class _MapaPageState extends ConsumerState<MapaPage> {
               .watch(parcelasPredioProvider(widget.archivoParcelas!))
               .valueOrNull;
 
+    // Cuando hay ruta, la tarjeta de abajo ocupa lugar: la leyenda y los
+    // botones suben para no quedar debajo de ella.
+    final hayPanel = _ruta != null || _calculando;
+    final abajo = hayPanel ? 116.0 : 32.0;
+
     return Scaffold(
       body: Stack(
         children: [
@@ -121,6 +278,11 @@ class _MapaPageState extends ConsumerState<MapaPage> {
               // (0,0) haria creer que el GPS fallo.
               initialCenter: aqui ?? const LatLng(4.28, -72.89),
               initialZoom: 15,
+              // El ruteo solo existe donde hay vias cargadas: sin el plano
+              // del predio no hay por donde trazar nada.
+              onLongPress: widget.archivoVias == null
+                  ? null
+                  : (_, punto) => _fijarDestino(punto),
               onPositionChanged: (camara, porGesto) {
                 setState(() {
                   _zoom = camara.zoom;
@@ -153,6 +315,10 @@ class _MapaPageState extends ConsumerState<MapaPage> {
               if (parcelas != null && _verParcelas)
                 RotulosBloque(parcelas: parcelas, zoom: _zoom),
 
+              // La ruta va sobre las vias y debajo del punto propio.
+              if (_ruta != null) CapaRuta(ruta: _ruta!),
+              if (_destino != null) MarcadorDestino(destino: _destino!),
+
               if (aqui != null) ...[
                 // El circulo de precision va SIEMPRE, debajo del punto.
                 CircleLayer(
@@ -182,10 +348,21 @@ class _MapaPageState extends ConsumerState<MapaPage> {
           ),
           _BarraEstado(posicion: _posicion, error: _error),
           if (vias != null && _verVias)
-            const Positioned(left: 16, bottom: 32, child: LeyendaVias()),
+            Positioned(left: 16, bottom: abajo, child: const LeyendaVias()),
+
+          // La pista de como se pide una ruta, arriba y no abajo: abajo pelea
+          // con la leyenda y los botones, y ahi nadie la lee.
+          if (widget.archivoVias != null && !_pistaVista)
+            Positioned(
+              top: MediaQuery.of(context).padding.top + 70,
+              left: 0,
+              right: 0,
+              child: const Center(child: PistaRuta()),
+            ),
+
           Positioned(
             right: 16,
-            bottom: 32,
+            bottom: abajo,
             child: Column(
               children: [
                 FloatingActionButton.small(
@@ -241,6 +418,23 @@ class _MapaPageState extends ConsumerState<MapaPage> {
               ],
             ),
           ),
+          if (_ruta != null)
+            Align(
+              alignment: Alignment.bottomCenter,
+              child: SafeArea(
+                child: PanelRuta(
+                  ruta: _ruta!,
+                  progreso: _progreso,
+                  calculando: _calculando,
+                  onCerrar: _quitarRuta,
+                ),
+              ),
+            )
+          else if (_calculando)
+            const Align(
+              alignment: Alignment.bottomCenter,
+              child: SafeArea(child: _CalculandoRuta()),
+            ),
         ],
       ),
     );
@@ -399,6 +593,37 @@ class _BarraEstado extends StatelessWidget {
                 ),
               ),
             ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Mientras se arma el grafo y se busca el camino.
+///
+/// La primera ruta de cada sesion tarda unas decimas de segundo -hay que armar
+/// el grafo de las vias- y sin este cartel esa demora se lee como que el mapa
+/// ignoro el gesto.
+class _CalculandoRuta extends StatelessWidget {
+  const _CalculandoRuta();
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      margin: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+      elevation: 6,
+      child: const Padding(
+        padding: EdgeInsets.symmetric(horizontal: 18, vertical: 18),
+        child: Row(
+          children: [
+            SizedBox(
+              width: 20,
+              height: 20,
+              child: CircularProgressIndicator(strokeWidth: 2.5),
+            ),
+            SizedBox(width: 16),
+            Text('Trazando la ruta por las vias del predio...'),
           ],
         ),
       ),
