@@ -161,7 +161,8 @@ class GeoPdf {
     if (i < 0) return null;
 
     var j = i + clave.length;
-    while (j < texto.length && (texto[j] == ' ' || texto[j] == '\r' || texto[j] == '\n')) {
+    while (j < texto.length &&
+        (texto[j] == ' ' || texto[j] == '\r' || texto[j] == '\n')) {
       j++;
     }
     if (j >= texto.length) return null;

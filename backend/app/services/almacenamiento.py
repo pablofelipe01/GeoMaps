@@ -114,13 +114,25 @@ def url_lectura(settings: Settings, llave: str, ttl: int | None = None) -> str:
     )
 
 
+def subir(settings: Settings, llave: str, contenido: bytes, content_type: str) -> str:
+    """Escribe un objeto y devuelve su llave.
+
+    Es para lo que llega por el backend y pesa poco, como el GeoJSON de una
+    ruta. Lo pesado -MBTiles, fotos- va directo del telefono con prefirmada.
+    Que `put_object` vuelva sin excepcion es la confirmacion que pide la regla
+    de "primero S3, despues Airtable": no hace falta un `existe` aparte.
+    """
+    cliente(settings).put_object(
+        Bucket=settings.s3_bucket,
+        Key=llave,
+        Body=contenido,
+        ContentType=content_type,
+    )
+    return llave
+
+
 # TODO: url_escritura(llave, content_type) -> URL prefirmada PUT
-# TODO: subir(bytes, llave, content_type) -> llave  (para lo que arma el backend)
 # TODO: borrar_prefijo(prefijo) -- al eliminar un proyecto
-# TODO: existe(llave) -> bool
-#       Lo usa sincronizacion.py antes de escribir la fila en Airtable: una
-#       `Llave geometria` que apunta a un objeto inexistente es un trazado que
-#       en la base parece estar y al abrirlo no esta.
 
 
 def llave_geometria(codigo_proyecto: str, codigo_trazado: str) -> str:

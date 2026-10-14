@@ -90,6 +90,7 @@ from fastapi import Header, HTTPException
 from jwt import PyJWKClient
 
 from ..config import Settings, get_settings
+from . import airtable
 
 # Los dos emisores que Google usa en sus ID tokens. Acepta las dos formas: la
 # version sin esquema se emitio durante anos y todavia aparece.
@@ -113,6 +114,18 @@ LARGO_MAX_CLAVE_BYTES = 72
 
 # Fuerza bruta. Con 8 intentos cada 15 minutos, probar las mil claves mas
 # comunes tarda mas de un dia; sin esto tarda un minuto.
+# Que herramientas ve cada cuenta en la app: opcion del campo `Perfiles` de
+# Airtable -> valor que viaja en el JWT y que lee la app.
+#
+# No es `Rol`. El rol dice quien puede ver datos ajenos (seguridad); el perfil
+# dice que hace la persona en campo. Mezclarlos obligaria a darle permisos de
+# soporte a alguien solo para que vea una pantalla.
+PERFILES: dict[str, str] = {"Plantacion": "plantacion", "Camiones": "camiones"}
+
+# Lo que tiene una cuenta con el campo vacio. Es lo que la app hacia antes de
+# que existieran los perfiles: asi ninguna cuenta vieja pierde nada.
+PERFILES_POR_DEFECTO: tuple[str, ...] = ("plantacion",)
+
 MAX_INTENTOS = 8
 MINUTOS_BLOQUEO = 15
 
@@ -137,6 +150,7 @@ class Identidad:
     foto: str | None
     codigo_usuario: str | None = None
     rol: str = "Usuario"
+    perfiles: tuple[str, ...] = PERFILES_POR_DEFECTO
 
 
 def verificar_id_token_google(id_token: str, settings: Settings) -> Identidad:
@@ -319,6 +333,56 @@ def revisar_bloqueo(campos: dict) -> None:
         )
 
 
+async def anotar_intento_fallido(settings: Settings, campos: dict) -> None:
+    """Suma uno al contador de fallos. Nunca hace fallar el login.
+
+    Lo usan el login con clave y la confirmacion de una vuelta de camion, que
+    pide la misma clave: el bloqueo por fuerza bruta tiene que ser uno solo, o
+    la segunda puerta sirve para probar claves sin limite.
+
+    Si Airtable no responde, el 401 que sigue tiene que salir igual: un contador
+    caido no puede convertirse en un 500 que deje a todo el mundo sin entrar.
+    """
+    try:
+        await airtable.upsert(
+            settings,
+            settings.airtable_tabla_usuarios,
+            "Auth UID",
+            campos["Auth UID"],
+            {
+                "Intentos fallidos": (campos.get("Intentos fallidos") or 0) + 1,
+                "Ultimo intento fallido": datetime.now(timezone.utc).isoformat(),
+            },
+        )
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def perfiles_de_campos(campos: dict) -> tuple[str, ...]:
+    """Los perfiles de una fila de `Usuarios`, ya traducidos.
+
+    Una opcion que no esta en `PERFILES` se ignora en vez de fallar: alguien
+    puede crear una opcion nueva en Airtable antes de que exista en el codigo,
+    y eso no puede dejar a la persona sin poder entrar.
+    """
+    crudos = campos.get("Perfiles") or []
+    perfiles = tuple(PERFILES[p] for p in crudos if p in PERFILES)
+    return perfiles or PERFILES_POR_DEFECTO
+
+
+def exigir_perfil(identidad: Identidad, perfil: str) -> None:
+    """403 si la cuenta no tiene el perfil. Para los endpoints de un modulo.
+
+    Esconder el boton en la app no protege nada: el endpoint se puede llamar
+    igual. Todo endpoint que sea de un solo perfil empieza por aca.
+    """
+    if perfil not in identidad.perfiles:
+        raise HTTPException(
+            status_code=403,
+            detail="Tu cuenta no tiene acceso a esta funcion. Pedila a soporte.",
+        )
+
+
 def emitir_jwt(identidad: Identidad, settings: Settings) -> tuple[str, datetime]:
     """Firma nuestro JWT y dice cuando vence.
 
@@ -337,6 +401,7 @@ def emitir_jwt(identidad: Identidad, settings: Settings) -> tuple[str, datetime]
             "sub": identidad.auth_uid,
             "uid": identidad.codigo_usuario,
             "rol": identidad.rol,
+            "perfiles": list(identidad.perfiles),
             "correo": identidad.correo,
             "iat": int(time.time()),
             "exp": int(vence.timestamp()),
@@ -379,6 +444,8 @@ async def identidad_de_request(
         foto=None,
         codigo_usuario=datos.get("uid"),
         rol=datos.get("rol", "Usuario"),
+        # Los tokens emitidos antes de los perfiles no traen el claim.
+        perfiles=tuple(datos.get("perfiles") or PERFILES_POR_DEFECTO),
     )
 
 

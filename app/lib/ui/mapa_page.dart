@@ -12,6 +12,7 @@ import 'package:geolocator/geolocator.dart';
 import 'package:latlong2/latlong.dart';
 
 import '../core/acopios.dart';
+import '../core/geo.dart';
 import '../core/parcelas.dart';
 import '../core/ruteo.dart';
 import '../core/ubicacion.dart';
@@ -19,6 +20,7 @@ import '../core/vias.dart';
 import '../state/gps.dart';
 import '../state/providers.dart';
 import '../state/sesion.dart';
+import '../state/sincronizador.dart';
 import '../state/zona_guaicaramo.dart';
 import 'capa_acopios.dart';
 import 'capa_parcelas.dart';
@@ -27,6 +29,7 @@ import 'capa_ruta.dart';
 import 'capa_vias.dart';
 import 'capas_panel.dart';
 import 'importar_mapa_page.dart';
+import 'rutas_guardadas.dart';
 
 /// La pantalla principal: el mapa.
 ///
@@ -36,7 +39,7 @@ import 'importar_mapa_page.dart';
 /// sabe.
 ///
 /// Esta es la primera version real. Todavia no lee MBTiles del usuario ni
-/// guarda trazados; sirve para responder en el telefono las dos preguntas que
+/// graba recorridos (si guarda las rutas calculadas); sirve para responder en el telefono las dos preguntas que
 /// deciden todo el proyecto: si `flutter_map` rinde con imagen satelital, y si
 /// el GPS entrega precision util bajo condiciones de campo.
 class MapaPage extends ConsumerStatefulWidget {
@@ -44,8 +47,23 @@ class MapaPage extends ConsumerStatefulWidget {
     this.archivoVias,
     this.archivoParcelas,
     this.archivoAcopios,
+    this.destinoInicial,
+    this.nombreDestinoInicial,
+    this.panelSuperior,
     super.key,
   });
+
+  /// El mapa de Guaicaramo, con sus vias, lotes y acopios. Un solo lugar
+  /// nombra los archivos del predio para que todos los que lo abren -la
+  /// tarjeta del inicio, el modulo de camiones- abran el mismo.
+  const MapaPage.guaicaramo({
+    this.destinoInicial,
+    this.nombreDestinoInicial,
+    this.panelSuperior,
+    super.key,
+  }) : archivoVias = 'guaicaramo-vias.json',
+       archivoParcelas = 'guaicaramo-parcelas.json',
+       archivoAcopios = 'guaicaramo-acopios.json';
 
   /// El asset de vias del predio que se esta abriendo, si es que abre uno.
   /// Nulo es el mapa a secas: satelite o calles y la posicion propia.
@@ -56,6 +74,16 @@ class MapaPage extends ConsumerStatefulWidget {
 
   /// El asset de acopios del predio, si los tiene.
   final String? archivoAcopios;
+
+  /// Abrir el mapa ya yendo hacia un punto: la vuelta que un conductor acaba
+  /// de tomar. La ruta se traza sola con el primer fix.
+  final LatLng? destinoInicial;
+  final String? nombreDestinoInicial;
+
+  /// Algo que va arriba, debajo de la barra del GPS. Lo pone quien abre el
+  /// mapa para una tarea -el viaje que se esta grabando- sin que el mapa tenga
+  /// que saber de que se trata.
+  final Widget? panelSuperior;
 
   @override
   ConsumerState<MapaPage> createState() => _MapaPageState();
@@ -132,6 +160,10 @@ class _MapaPageState extends ConsumerState<MapaPage>
   ProgresoRuta? _progreso;
   bool _calculando = false;
 
+  /// Si la ruta que se esta siguiendo ya esta guardada: la que se acaba de
+  /// guardar, o una que se abrio de la lista. El boton no guarda dos veces.
+  bool _rutaGuardada = false;
+
   /// Para descartar el resultado de un calculo que quedo viejo: si alguien
   /// marca otro destino mientras se arma el grafo, el primero no puede pisar
   /// al segundo al terminar.
@@ -152,6 +184,14 @@ class _MapaPageState extends ConsumerState<MapaPage>
   @override
   void initState() {
     super.initState();
+    final destino = widget.destinoInicial;
+    if (destino != null) {
+      // Sin calcular todavia: falta el primer fix. `_revisarRuta` lo traza en
+      // cuanto llegue, igual que cuando se marca un punto sin senal.
+      _destino = destino;
+      _nombreDestino = widget.nombreDestinoInicial;
+      _pistaVista = true;
+    }
     _suscripcion = Gps.instancia.posiciones.listen(
       _alFix,
       onError: (Object e) {
@@ -297,6 +337,7 @@ class _MapaPageState extends ConsumerState<MapaPage>
       if (nombre == null) _acopio = null;
       _ruta = null;
       _progreso = null;
+      _rutaGuardada = false;
       _pistaVista = true;
     });
     _calcularRuta(porDesvio: false);
@@ -310,8 +351,61 @@ class _MapaPageState extends ConsumerState<MapaPage>
       _ruta = null;
       _progreso = null;
       _calculando = false;
+      _rutaGuardada = false;
       _calculo++;
     });
+  }
+
+  /// Guarda la ruta que se esta mostrando, con el nombre que se elija.
+  ///
+  /// Se guarda la linea completa tal como se ve, desde donde se pidio. Queda en
+  /// el telefono al instante y sube sola en cuanto haya red: guardar no puede
+  /// depender de tener senal, que es justo lo que falta en el lote.
+  Future<void> _guardarRuta() async {
+    final ruta = _ruta;
+    final usuario = ref.read(sesionProvider).sesion?.codigoUsuario;
+    if (ruta == null || usuario == null || usuario.isEmpty) return;
+
+    final nombre = await pedirNombreRuta(
+      context,
+      _nombreDestino ?? 'Ruta de ${formatearDistancia(ruta.metrosTotales)}',
+    );
+    if (nombre == null || !mounted) return;
+
+    try {
+      await ref
+          .read(trazadosRepositoryProvider)
+          .guardarRuta(
+            usuarioCodigo: usuario,
+            nombre: nombre,
+            linea: [
+              for (final p in ruta.completa) PuntoGeo(p.latitude, p.longitude),
+            ],
+            metros: ruta.metrosTotales,
+          );
+    } catch (_) {
+      _avisar('No se pudo guardar la ruta en el telefono.');
+      return;
+    }
+    if (!mounted) return;
+    setState(() => _rutaGuardada = true);
+    _avisar('Ruta guardada. Sube a la base cuando haya senal.');
+    unawaited(ref.read(sincronizadorProvider.notifier).sincronizar());
+  }
+
+  /// Abre la lista de rutas guardadas y va hacia la que se elija.
+  ///
+  /// La ruta se vuelve a calcular desde donde se esta ahora: la guardada salio
+  /// de otro lugar, y seguirla obligaria a ir primero hasta donde arrancaba.
+  Future<void> _abrirRutasGuardadas() async {
+    final elegida = await elegirRutaGuardada(context);
+    if (elegida == null || !mounted) return;
+    if (_destino != null) _quitarRuta();
+    _fijarDestino(
+      LatLng(elegida.destino.latitud, elegida.destino.longitud),
+      nombre: elegida.nombre,
+    );
+    setState(() => _rutaGuardada = true);
   }
 
   /// Calcula -o recalcula- la ruta desde donde se esta parado ahora.
@@ -704,6 +798,14 @@ class _MapaPageState extends ConsumerState<MapaPage>
           ),
           _BarraEstado(posicion: _posicion, error: _error),
 
+          if (widget.panelSuperior != null)
+            Positioned(
+              top: MediaQuery.of(context).padding.top + 64,
+              left: 12,
+              right: 12,
+              child: widget.panelSuperior!,
+            ),
+
           // La pista de como se pide una ruta, arriba y no abajo: abajo pelea
           // con la leyenda y los botones, y ahi nadie la lee.
           if (widget.archivoVias != null && !_pistaVista)
@@ -725,6 +827,15 @@ class _MapaPageState extends ConsumerState<MapaPage>
                   tooltip: 'Mi cuenta',
                   child: const Icon(Icons.account_circle_outlined),
                 ),
+                if (widget.archivoVias != null) ...[
+                  const SizedBox(height: 12),
+                  FloatingActionButton.small(
+                    heroTag: 'rutas',
+                    onPressed: _abrirRutasGuardadas,
+                    tooltip: 'Rutas guardadas',
+                    child: const Icon(Icons.bookmarks_outlined),
+                  ),
+                ],
                 if (acopios != null) ...[
                   const SizedBox(height: 12),
                   FloatingActionButton.small(
@@ -777,6 +888,8 @@ class _MapaPageState extends ConsumerState<MapaPage>
                   calculando: _calculando,
                   nombreDestino: _nombreDestino,
                   onCerrar: _quitarRuta,
+                  onGuardar: _calculando ? null : _guardarRuta,
+                  guardada: _rutaGuardada,
                 ),
               ),
             )

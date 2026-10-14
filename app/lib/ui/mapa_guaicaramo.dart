@@ -37,11 +37,7 @@ class MapaGuaicaramo extends ConsumerWidget {
         onTap: abierto
             ? () => Navigator.of(context).push(
                 MaterialPageRoute<void>(
-                  builder: (_) => const MapaPage(
-                    archivoVias: 'guaicaramo-vias.json',
-                    archivoParcelas: 'guaicaramo-parcelas.json',
-                    archivoAcopios: 'guaicaramo-acopios.json',
-                  ),
+                  builder: (_) => const MapaPage.guaicaramo(),
                 ),
               )
             : () => _explicar(context, estado),

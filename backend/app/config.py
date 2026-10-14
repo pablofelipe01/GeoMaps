@@ -79,6 +79,14 @@ class Settings(BaseSettings):
     s3_ttl_lectura: int = 86400
     s3_ttl_escritura: int = 3600
 
+    # --- Supabase de SiriusFleet (planilla de vagones) --------------------
+    # El modulo de camiones lee de ahi las vueltas pendientes y anota la salida
+    # cuando un conductor confirma. Va por el backend y no desde el APK: la
+    # llave no puede viajar en el bolsillo de nadie. Basta la anon key (las
+    # policies de la planilla dejan leer y actualizar); nunca la service_role.
+    supabase_url: str = ""
+    supabase_key: str = ""
+
     # --- Actualizaciones del APK -----------------------------------------
     # El manifiesto de la version vigente. Lo escribe tools/publicar_apk.py y
     # lo lee services/version_app.py. Los dias de gracia viajan adentro del

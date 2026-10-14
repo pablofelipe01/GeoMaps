@@ -33,6 +33,37 @@ import 'providers.dart' show versionLocalProvider;
 ///
 /// ## Por que esto funciona en el monte
 ///
+/// Que herramientas ve una cuenta en la app.
+///
+/// Una sola app para todos, y cada cuenta ve lo suyo: se asigna en el campo
+/// `Perfiles` de `Usuarios` en Airtable. No es `rol` -eso es quien puede ver
+/// datos ajenos-, es que hace la persona en campo.
+///
+/// El codigo de cada modulo vive en su carpeta (`lib/camiones/`), para que
+/// sumar uno no enrede los otros.
+enum Perfil {
+  /// Ubicarse en la plantacion, planos, lotes, rutas. Lo que la app hacia
+  /// siempre, y lo que tiene una cuenta sin perfil asignado.
+  plantacion,
+
+  /// El personal de camiones.
+  camiones;
+
+  /// Lo que trae una sesion sin perfiles: las guardadas antes de que
+  /// existieran, o una cuenta con el campo vacio. Nadie pierde lo que tenia.
+  static const porDefecto = {Perfil.plantacion};
+
+  /// Los que llegan del backend. Uno que esta app no conoce se ignora: el
+  /// backend puede estrenar un perfil antes de que este APK sepa dibujarlo.
+  static Set<Perfil> deJson(Object? crudo) {
+    final conocidos = {
+      for (final p in (crudo as List<dynamic>? ?? const []))
+        ...Perfil.values.where((v) => v.name == p),
+    };
+    return conocidos.isEmpty ? porDefecto : conocidos;
+  }
+}
+
 /// El JWT propio dura 30 dias y **leerlo no necesita red**. Alguien entra con
 /// senal una vez y trabaja un mes sin volver a ver una pantalla de login. Si la
 /// sesion dependiera del token de Google, la app pediria login justo en el unico
@@ -47,6 +78,7 @@ class Sesion {
     required this.venceEn,
     this.proveedor = 'Google',
     this.foto,
+    this.perfiles = Perfil.porDefecto,
   });
 
   factory Sesion.deJson(Map<String, dynamic> j) => Sesion(
@@ -60,6 +92,7 @@ class Sesion {
     proveedor: j['proveedor'] as String? ?? 'Google',
     foto: j['foto'] as String?,
     venceEn: DateTime.parse(j['vence_en'] as String),
+    perfiles: Perfil.deJson(j['perfiles']),
   );
 
   final String authUid;
@@ -75,6 +108,12 @@ class Sesion {
   final String? foto;
   final DateTime venceEn;
 
+  /// Se lee de la sesion guardada, sin red, como todo lo demas. Un cambio en
+  /// Airtable llega al telefono la proxima vez que la persona entra.
+  final Set<Perfil> perfiles;
+
+  bool tiene(Perfil p) => perfiles.contains(p);
+
   Map<String, dynamic> aJson() => {
     'auth_uid': authUid,
     'codigo_usuario': codigoUsuario,
@@ -84,6 +123,7 @@ class Sesion {
     'proveedor': proveedor,
     'foto': foto,
     'vence_en': venceEn.toIso8601String(),
+    'perfiles': [for (final p in perfiles) p.name],
   };
 
   bool get vencida => DateTime.now().isAfter(venceEn);

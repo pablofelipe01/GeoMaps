@@ -1,16 +1,19 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../camiones/camiones_page.dart';
 import '../core/ubicacion.dart';
 import '../state/providers.dart';
 import '../state/red.dart';
 import '../state/sesion.dart';
+import '../state/sincronizador.dart';
 import '../state/ubicacion_provider.dart';
 import 'actualizacion_page.dart';
 import 'en_construccion.dart';
 import 'mapa_guaicaramo.dart';
 import 'mapa_page.dart';
 import 'proyectos_page.dart';
+import 'sincronizacion_page.dart';
 
 /// La primera pantalla despues de entrar.
 ///
@@ -28,6 +31,9 @@ class HomePage extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final sesion = ref.watch(sesionProvider).sesion;
+    // Lo que sube solo al volver la red. Se engancha aca porque el inicio queda
+    // debajo de todas las pantallas mientras haya sesion.
+    ref.watch(sincronizacionAutomaticaProvider);
     // Solo pasa durante el parpadeo entre cerrar sesion y que la puerta
     // reemplace esta pantalla por el login.
     if (sesion == null) return const SizedBox.shrink();
@@ -268,6 +274,11 @@ class _Accesos extends ConsumerWidget {
         ? const AsyncValue<int>.loading()
         : ref.watch(cantidadProyectosProvider(sesion.authUid));
 
+    // Lo comun (mapa, sincronizar) lo ve todo el mundo; lo de cada modulo,
+    // solo quien tiene el perfil. Cada tarjeta nueva decide aca de cual es.
+    final plantacion = sesion?.tiene(Perfil.plantacion) ?? true;
+    final camiones = sesion?.tiene(Perfil.camiones) ?? false;
+
     return GridView.count(
       crossAxisCount: 2,
       shrinkWrap: true,
@@ -285,45 +296,48 @@ class _Accesos extends ConsumerWidget {
           destacada: true,
           alTocar: () => _ir(context, const MapaPage()),
         ),
-        _Tarjeta(
-          icono: Icons.folder_outlined,
-          titulo: 'Proyectos',
-          detalle: cuantos.maybeWhen(
-            data: (n) => n == 1 ? '1 proyecto' : '$n proyectos',
-            orElse: () => 'Abrir',
+        if (camiones)
+          _Tarjeta(
+            icono: Icons.local_shipping_outlined,
+            titulo: 'Camiones',
+            detalle: 'Herramientas de transporte',
+            alTocar: () => _ir(context, const CamionesPage()),
           ),
-          alTocar: () => _ir(context, const ProyectosPage()),
-        ),
-        _Tarjeta(
-          icono: Icons.download_outlined,
-          titulo: 'Descargas',
-          detalle: 'Mapas sin senal',
-          alTocar: () => _ir(
-            context,
-            const EnConstruccionPage(
-              titulo: 'Descargas',
-              icono: Icons.download_outlined,
-              detalle:
-                  'Aca vas a bajar al telefono los mapas de un proyecto, '
-                  'y a recortar una region del satelite para usarla sin senal.',
+        if (plantacion)
+          _Tarjeta(
+            icono: Icons.folder_outlined,
+            titulo: 'Proyectos',
+            detalle: cuantos.maybeWhen(
+              data: (n) => n == 1 ? '1 proyecto' : '$n proyectos',
+              orElse: () => 'Abrir',
+            ),
+            alTocar: () => _ir(context, const ProyectosPage()),
+          ),
+        if (plantacion)
+          _Tarjeta(
+            icono: Icons.download_outlined,
+            titulo: 'Descargas',
+            detalle: 'Mapas sin senal',
+            alTocar: () => _ir(
+              context,
+              const EnConstruccionPage(
+                titulo: 'Descargas',
+                icono: Icons.download_outlined,
+                detalle:
+                    'Aca vas a bajar al telefono los mapas de un proyecto, '
+                    'y a recortar una region del satelite para usarla sin senal.',
+              ),
             ),
           ),
-        ),
         _Tarjeta(
           icono: Icons.sync,
           titulo: 'Sincronizar',
-          detalle: 'Subir lo pendiente',
-          alTocar: () => _ir(
-            context,
-            const EnConstruccionPage(
-              titulo: 'Sincronizacion',
-              icono: Icons.sync,
-              detalle:
-                  'Aca vas a ver que trazados y fotos faltan por subir, '
-                  'cuando fue la ultima subida buena y, si fallo, con que '
-                  'error.',
-            ),
-          ),
+          detalle: switch (ref.watch(pendientesProvider).valueOrNull ?? 0) {
+            0 => 'Todo arriba',
+            1 => '1 pendiente',
+            final n => '$n pendientes',
+          },
+          alTocar: () => _ir(context, const SincronizacionPage()),
         ),
       ],
     );

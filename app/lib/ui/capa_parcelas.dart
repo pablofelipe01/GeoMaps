@@ -31,11 +31,7 @@ import '../core/parcelas.dart';
 /// o no. Mientras esas no cambien, la de antes sirve igual. Arrastrar el mapa
 /// no cambia ninguna de las dos, y por eso arrastrar ya no reconstruye nada.
 class CapaParcelas extends StatefulWidget {
-  const CapaParcelas({
-    required this.parcelas,
-    required this.zoom,
-    super.key,
-  });
+  const CapaParcelas({required this.parcelas, required this.zoom, super.key});
 
   final ParcelasPredio parcelas;
 
@@ -61,7 +57,8 @@ class _CapaParcelasState extends State<CapaParcelas> {
     // El zoom cambia en cada gesto, pero lo dibujado solo cambia cuando cruza
     // el umbral. Comparar el umbral y no el zoom es lo que evita rearmar la
     // lista mientras alguien hace zoom de 14,1 a 14,2.
-    if (conCodigo != _conCodigo || !identical(anterior.parcelas, widget.parcelas)) {
+    if (conCodigo != _conCodigo ||
+        !identical(anterior.parcelas, widget.parcelas)) {
       _conCodigo = conCodigo;
       _poligonos = _armar(widget.parcelas, conCodigo);
     }

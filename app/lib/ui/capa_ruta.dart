@@ -133,11 +133,20 @@ class PanelRuta extends StatelessWidget {
     required this.progreso,
     required this.calculando,
     required this.onCerrar,
+    this.onGuardar,
+    this.guardada = false,
     this.nombreDestino,
     super.key,
   });
 
   final Ruta ruta;
+
+  /// Guardar la ruta para volver a abrirla. Nulo mientras se recalcula: la
+  /// linea que se ve en ese momento es la vieja.
+  final VoidCallback? onGuardar;
+
+  /// Si esta ruta ya se guardo. El boton queda marcado y no guarda dos veces.
+  final bool guardada;
 
   /// Donde va respecto de la ruta. Nulo mientras no haya llegado un fix.
   final ProgresoRuta? progreso;
@@ -211,6 +220,13 @@ class PanelRuta extends StatelessWidget {
                   ),
                 ],
               ),
+            ),
+            IconButton(
+              onPressed: guardada ? null : onGuardar,
+              icon: Icon(
+                guardada ? Icons.bookmark : Icons.bookmark_add_outlined,
+              ),
+              tooltip: guardada ? 'Ruta guardada' : 'Guardar la ruta',
             ),
             IconButton(
               onPressed: onCerrar,

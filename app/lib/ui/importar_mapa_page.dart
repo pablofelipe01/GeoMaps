@@ -89,7 +89,10 @@ class _ImportarMapaPageState extends ConsumerState<ImportarMapaPage> {
 
   /// "Acopios Guaicaramo 2026 (1).pdf" -> "Acopios Guaicaramo 2026 (1)".
   String _nombreLegible(String archivo) {
-    final sinExtension = archivo.replaceAll(RegExp(r'\.pdf$', caseSensitive: false), '');
+    final sinExtension = archivo.replaceAll(
+      RegExp(r'\.pdf$', caseSensitive: false),
+      '',
+    );
     return sinExtension.trim().isEmpty ? 'Plano' : sinExtension.trim();
   }
 
@@ -183,9 +186,7 @@ class _ImportarMapaPageState extends ConsumerState<ImportarMapaPage> {
                     ),
                   )
                 : Column(
-                    children: [
-                      for (final capa in lista) _FilaCapa(capa: capa),
-                    ],
+                    children: [for (final capa in lista) _FilaCapa(capa: capa)],
                   ),
           ),
         ],

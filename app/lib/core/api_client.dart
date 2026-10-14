@@ -121,10 +121,48 @@ class ApiClient {
     return jsonDecode(utf8.decode(r.bodyBytes)) as Map<String, dynamic>;
   }
 
+  /// Sube una tanda de lo pendiente. Devuelve, por cada UUID, si quedo.
+  ///
+  /// El timeout es mas largo que el de las demas: del otro lado cada trazado
+  /// son tres escrituras (S3 y dos de Airtable) y Airtable admite cinco por
+  /// segundo.
+  Future<Map<String, dynamic>> sincronizar(Map<String, dynamic> cuerpo) async {
+    final r = await _http
+        .post(_uri('/v1/sync'), headers: _cabeceras(), body: jsonEncode(cuerpo))
+        .timeout(const Duration(seconds: 60));
+    if (r.statusCode != 200) throw _fallo(r);
+    return jsonDecode(utf8.decode(r.bodyBytes)) as Map<String, dynamic>;
+  }
+
+  /// Las vueltas pendientes por recoger de la planilla de SiriusFleet.
+  Future<Map<String, dynamic>> vueltasPendientes() async {
+    final r = await _http
+        .get(_uri('/v1/camiones/vueltas'), headers: _cabeceras())
+        .timeout(const Duration(seconds: 20));
+    if (r.statusCode != 200) throw _fallo(r);
+    return jsonDecode(utf8.decode(r.bodyBytes)) as Map<String, dynamic>;
+  }
+
+  /// El conductor toma una vuelta, firmando con su cedula y su clave.
+  Future<Map<String, dynamic>> confirmarVuelta(
+    String vueltaId, {
+    required String cedula,
+    required String clave,
+  }) async {
+    final r = await _http
+        .post(
+          _uri('/v1/camiones/vueltas/$vueltaId/confirmar'),
+          headers: _cabeceras(),
+          body: jsonEncode({'cedula': cedula, 'clave': clave}),
+        )
+        .timeout(const Duration(seconds: 30));
+    if (r.statusCode != 200) throw _fallo(r);
+    return jsonDecode(utf8.decode(r.bodyBytes)) as Map<String, dynamic>;
+  }
+
   // TODO: GET  /v1/proyectos            -> espejo del directorio
   // TODO: GET  /v1/mapas?proyecto=      -> fichas de mapas listos
   // TODO: GET  /v1/mapas/{id}/descarga  -> URL prefirmada del MBTiles
-  // TODO: POST /v1/sync                 -> upsert por UUID de lo pendiente
   // TODO: POST /v1/archivos             -> sube KML/GPX/PDF/foto a S3
 }
 

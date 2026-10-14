@@ -56,6 +56,8 @@ USUARIO -> PROYECTO -> MAPA (capa base offline)
 | `Foto` | URL | El avatar de Google, si lo hay. Vacio en las cuentas de clave |
 | `Rol` | Single select | `Usuario` / `Soporte` / `Admin`. Toda cuenta nueva nace `Usuario` |
 | `Estado` | Single select | `Activa` / `Suspendida` / `Baja pedida` |
+| `Perfiles` | Multiple select | `Plantacion` / `Camiones`. Que herramientas ve en la app. **Vacio = Plantacion**, asi las cuentas viejas no pierden nada. Se asigna a mano; llega al telefono la proxima vez que la persona entra |
+| `Cedula` | Single line text | Solo digitos. La del conductor en SiriusFleet (`operadores.documento`). **Se llena sola** la primera vez que confirma una vuelta y desde ahi queda atada: esa cuenta solo confirma con esa cedula y ninguna otra cuenta puede usarla. Para cambiarla se borra a mano |
 | `Espacio usado (MB)` | Number (1 decimal) | Suma de lo que ocupa en S3. Contra `CUOTA_MB_POR_USUARIO` |
 | `Registrado en` | Date with time | |
 | `Ultimo acceso` | Date with time | |
@@ -92,6 +94,18 @@ formulario, porque el nombre hay que preguntarlo — pero `POST /v1/registro`
 devuelve la sesion abierta, no un "ya te podes loguear": mandar a alguien a un
 segundo formulario desperdicia el unico rato con senal que va a tener ese dia.
 
+**Camiones: las vueltas viven en SiriusFleet, no aca.** La lista de vueltas
+pendientes y quien salio por cada una estan en la planilla de vagones de
+SiriusFleet (Supabase). GeoMaps solo la lee y, al confirmar, anota conductor y
+hora de salida alla (`backend/app/services/supabase.py`). Lo unico que queda en
+esta base es la `Cedula` atada a la cuenta y el viaje grabado, que sube como un
+`Trazado` con `Metodo = Automatico` y la vuelta en las propiedades del GeoJSON.
+
+**`Perfiles` no es `Rol`.** El rol dice quien puede ver datos ajenos; el
+perfil dice que hace la persona en campo y por lo tanto que modulos ve. Viaja en
+el JWT, asi que la app lo lee sin red, y un endpoint de un solo modulo lo revisa
+con `auth.exigir_perfil`: esconder el boton en la app no protege nada.
+
 **`Rol` ya no reparte permisos sobre proyectos ajenos.** Antes, con nomina, un
 Coordinador veia el trabajo de todo el equipo. Con registro abierto eso seria
 un agujero: `Usuario` ve lo suyo y nada mas. `Soporte` y `Admin` son para
@@ -127,6 +141,13 @@ tiene el mapa nuevo en el telefono?* Sin esta tabla la respuesta es llamarlo.
 | `Mapas` | Link -> Mapas | |
 | `Trazados` | Link -> Trazados | |
 | `Dueno` | Link -> Usuarios | El mismo dato, para navegar la base a mano |
+
+**El proyecto `local`.** El mapa hoy se abre sin proyecto y lo que se guarda en
+el telefono cae en `proyectoCodigo = 'local'`, la misma cadena en todos los
+telefonos. Al subir, el backend lo traduce a un proyecto por cuenta,
+`Codigo proyecto = local-<Auth UID>` con `Nombre = Sin proyecto`, creado la
+primera vez con su dueno. Asi no se mezclan las rutas de distintas cuentas ni
+sus prefijos de S3.
 
 `Dueno Auth UID` se repite como texto plano aunque ya exista el enlace `Dueno`.
 No es redundancia por descuido: `filterByFormula` sobre un campo de enlace en
@@ -177,7 +198,7 @@ abre sin error, y nadie lo nota hasta que alguien camina al punto equivocado.
 | `Distancia (m)` | Number (1 decimal) | |
 | `Area (ha)` | Number (4 decimales) | Solo poligonos. Calculada con el radio WGS84 de `core/geo.dart`, el mismo que usa Google Earth |
 | `Precision media (m)` | Number (1 decimal) | Que tan bueno era el GPS. Un poligono levantado bajo arboles con 30 m de error no sirve para un lindero |
-| `Metodo` | Single select | `Automatico` / `Manual` / `Mixto` |
+| `Metodo` | Single select | `Automatico` / `Manual` / `Mixto` / `Calculada`. `Calculada` es una ruta del ruteo por vias guardada desde el mapa: nadie la camino, no tiene `Precision media` y no sirve como lindero |
 | `Iniciado en` / `Terminado en` | Date with time | |
 | `Capturado por` | Link -> Usuarios | |
 | `Archivos` | Link -> Archivos | Sus KML/GPX/PDF |
@@ -356,6 +377,12 @@ persona, nosotros solo dejamos de reconocer su `sub`.
 ---
 
 ## Reglas que aplica el backend, no el modelo
+
+0. **Los Single select se traducen en un solo lugar.** El telefono manda el
+   `.name` de Dart (`ruta`, `calculada`) y `backend/app/schemas_sync.py` lo
+   pasa a la opcion de aca (`Ruta`, `Calculada`). Lo que no esta en esa tabla
+   se rechaza: con `typecast` un valor sin traducir no falla, crea una opcion
+   nueva al lado de la buena.
 
 1. **Upsert por UUID, siempre.** Buscar por `Codigo X` y actualizar si existe.
    La red movil rural corta a mitad de un POST mas seguido de lo que parece.

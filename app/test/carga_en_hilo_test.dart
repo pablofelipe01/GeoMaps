@@ -82,8 +82,10 @@ void main() {
     ]);
 
     final aca = RedVial.construir(vias).ruta(desde: a, hasta: f)!;
-    final cruzada = (await compute(RedVial.construir, vias))
-        .ruta(desde: a, hasta: f)!;
+    final cruzada = (await compute(
+      RedVial.construir,
+      vias,
+    )).ruta(desde: a, hasta: f)!;
 
     expect(cruzada.metros, closeTo(aca.metros, 0.001));
     expect(cruzada.porLaVia.length, aca.porLaVia.length);

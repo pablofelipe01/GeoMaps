@@ -98,6 +98,12 @@ dependencies:
   ota_update: ^7.1.0
   crypto: ^3.0.7
   image: ^4.10.1
+
+  # --- Camiones ----------------------------------------------------------
+  # Leer el QR de vueltas pendientes que imprime SiriusFleet. Usa ML Kit del
+  # telefono, sin red: el QR se escanea en el patio, donde la senal es poca.
+  mobile_scanner: ^7.4.2
+
 dev_dependencies:
   flutter_test:
     sdk: flutter

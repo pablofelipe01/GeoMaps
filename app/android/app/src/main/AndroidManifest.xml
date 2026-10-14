@@ -6,6 +6,20 @@
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION"/>
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION"/>
 
+    <!-- Grabar el viaje de un camion con la pantalla apagada. El servicio en
+         primer plano es el de geolocator (tipo `location`), con una
+         notificacion fija mientras graba: sin el, Android corta la ubicacion
+         a los pocos minutos de apagar la pantalla y el recorrido queda con un
+         hueco. Android 14 exige el permiso por tipo de servicio; 13 pide
+         POST_NOTIFICATIONS para que la notificacion se vea. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION"/>
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
+    <uses-permission android:name="android.permission.WAKE_LOCK"/>
+
+    <!-- Escanear el QR de vueltas pendientes (mobile_scanner). -->
+    <uses-permission android:name="android.permission.CAMERA"/>
+
     <!-- Bajar teselas y sincronizar. -->
     <uses-permission android:name="android.permission.INTERNET"/>
 

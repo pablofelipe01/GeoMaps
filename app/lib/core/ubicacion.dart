@@ -76,6 +76,7 @@ class Ubicacion {
   static Stream<Position> flujo({
     int distanciaMinimaM = 3,
     bool soloChipGps = false,
+    bool enFondo = false,
   }) async* {
     final cache = await ultimaConocida();
     if (cache != null) {
@@ -91,6 +92,22 @@ class Ubicacion {
         // seguido al ir en la camioneta, en vez de dar saltos.
         intervalDuration: const Duration(seconds: 1),
         forceLocationManager: soloChipGps,
+        // Con la pantalla apagada Android corta la ubicacion de una app a los
+        // pocos minutos. Como servicio en primer plano no: es lo que deja
+        // grabar el viaje de un camion con el telefono en la guantera. La
+        // notificacion fija no es decoracion, la exige Android, y le dice al
+        // conductor que la app sigue gastando bateria.
+        foregroundNotificationConfig: enFondo
+            ? const ForegroundNotificationConfig(
+                notificationTitle: 'GeoMaps esta grabando el viaje',
+                notificationText:
+                    'La ubicacion sigue con la pantalla apagada. Termina el '
+                    'viaje desde la app para que pare.',
+                notificationChannelName: 'Grabacion de viajes',
+                enableWakeLock: true,
+                setOngoing: true,
+              )
+            : null,
       ),
     );
   }

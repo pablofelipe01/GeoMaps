@@ -21,8 +21,7 @@ void main() {
   /// Y mayor primero y el /Measure en un objeto aparte.
   String armado({
     String bbox = '[10 900 700 100]',
-    String gpts =
-        '[4.20 -73.10 4.60 -73.10 4.60 -72.90 4.20 -72.90]',
+    String gpts = '[4.20 -73.10 4.60 -73.10 4.60 -72.90 4.20 -72.90]',
     String limites = '[0 1 0 0 1 0 1 1]',
   }) =>
       '39 0 obj\n<</Type/Page/MediaBox [0 0 720 1000]'
@@ -64,7 +63,9 @@ void main() {
   group('se planta y dice por que', () {
     test('un PDF sin georreferencia', () {
       expect(
-        () => GeoPdf.leer(pdf('39 0 obj\n<</Type/Page/MediaBox [0 0 720 1000]>>')),
+        () => GeoPdf.leer(
+          pdf('39 0 obj\n<</Type/Page/MediaBox [0 0 720 1000]>>'),
+        ),
         throwsA(
           isA<GeoPdfInvalido>().having(
             (e) => e.motivo,
@@ -91,7 +92,8 @@ void main() {
     test('un PDF con la georreferencia comprimida', () {
       // Sin GPTS legibles y con objetos comprimidos: es el caso que hay que
       // mandar a convertir al computador, y el mensaje tiene que decirlo.
-      final comprimido = '39 0 obj\n<</Type/Page/MediaBox [0 0 720 1000]'
+      final comprimido =
+          '39 0 obj\n<</Type/Page/MediaBox [0 0 720 1000]'
           '/VP[<</Type/Viewport/BBox[10 900 700 100]/Measure 38 0 R >>]>>\n'
           'endobj\n38 0 obj\n<</Type/ObjStm/N 4>>\nendobj\n';
       expect(
@@ -108,10 +110,7 @@ void main() {
 
     test('un area georreferenciada que no es un rectangulo', () {
       final raro = armado(limites: '[0 1 0 0 1 0 0.5 0.5]');
-      expect(
-        () => GeoPdf.leer(pdf(raro)),
-        throwsA(isA<GeoPdfInvalido>()),
-      );
+      expect(() => GeoPdf.leer(pdf(raro)), throwsA(isA<GeoPdfInvalido>()));
     });
   });
 

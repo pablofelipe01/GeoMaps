@@ -37,7 +37,16 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from .config import Settings, get_settings
-from .services import airtable, almacenamiento, auth, version_app
+from .schemas_camiones import ConfirmarRequest, ConfirmarResponse, VueltasResponse
+from .schemas_sync import SyncRequest, SyncResponse
+from .services import (
+    airtable,
+    almacenamiento,
+    auth,
+    camiones,
+    sincronizacion,
+    version_app,
+)
 
 app = FastAPI(title="GeoMaps API", version="0.1.0")
 
@@ -121,6 +130,8 @@ class EntrarResponse(BaseModel):
     foto: str | None
     rol: str
     proveedor: str
+    # Que herramientas ve en la app: `plantacion`, `camiones`. Ver auth.PERFILES.
+    perfiles: list[str]
 
 
 def _armar_sesion(
@@ -142,6 +153,7 @@ def _armar_sesion(
         foto=identidad.foto,
         rol=identidad.rol,
         proveedor=proveedor,
+        perfiles=list(identidad.perfiles),
     )
 
 
@@ -220,6 +232,7 @@ async def entrar(
         foto=identidad.foto,
         codigo_usuario=codigo_usuario,
         rol=rol,
+        perfiles=auth.perfiles_de_campos(campos_existentes),
     )
     return _armar_sesion(completa, "Google", settings)
 
@@ -339,7 +352,7 @@ async def entrar_con_clave(
     # cuales correos estan registrados.
     if not auth.verificar_clave(req.clave, campos.get("Hash clave")):
         if fila:
-            await _anotar_intento_fallido(settings, campos)
+            await auth.anotar_intento_fallido(settings, campos)
         raise HTTPException(status_code=401, detail="Correo o clave incorrectos.")
 
     if campos.get("Estado") == "Suspendida":
@@ -372,29 +385,9 @@ async def entrar_con_clave(
         foto=campos.get("Foto"),
         codigo_usuario=codigo_usuario,
         rol=campos.get("Rol") or "Usuario",
+        perfiles=auth.perfiles_de_campos(campos),
     )
     return _armar_sesion(identidad, "Correo", settings)
-
-
-async def _anotar_intento_fallido(settings: Settings, campos: dict) -> None:
-    """Suma uno al contador de fallos. Nunca hace fallar el login.
-
-    Si Airtable no responde, el 401 que sigue tiene que salir igual: un contador
-    caido no puede convertirse en un 500 que deje a todo el mundo sin entrar.
-    """
-    try:
-        await airtable.upsert(
-            settings,
-            settings.airtable_tabla_usuarios,
-            "Auth UID",
-            campos["Auth UID"],
-            {
-                "Intentos fallidos": (campos.get("Intentos fallidos") or 0) + 1,
-                "Ultimo intento fallido": datetime.now(timezone.utc).isoformat(),
-            },
-        )
-    except Exception:  # noqa: BLE001
-        pass
 
 
 class VersionResponse(BaseModel):
@@ -479,9 +472,49 @@ async def yo(
     }
 
 
+@app.post("/v1/sync", response_model=SyncResponse)
+async def sync(
+    req: SyncRequest,
+    identidad: auth.Identidad = Depends(auth.identidad_de_request),
+    _: None = Depends(auth.verificar_api_key),
+) -> SyncResponse:
+    """Sube lo que el telefono guardo sin senal. Hoy: los trazados.
+
+    Responde 200 aunque algun trazado no haya quedado: el detalle va por item,
+    y el telefono reintenta solo esos. Un error de la tanda entera seria pedirle
+    que vuelva a mandar tambien lo que ya subio.
+    """
+    return await sincronizacion.sincronizar(get_settings(), identidad, req)
+
+
+@app.get("/v1/camiones/vueltas", response_model=VueltasResponse)
+async def vueltas_pendientes(
+    identidad: auth.Identidad = Depends(auth.identidad_de_request),
+    _: None = Depends(auth.verificar_api_key),
+) -> VueltasResponse:
+    """Las vueltas por recoger de la planilla de SiriusFleet. Lo que abre el QR."""
+    auth.exigir_perfil(identidad, "camiones")
+    return VueltasResponse(vueltas=await camiones.pendientes(get_settings()))
+
+
+@app.post("/v1/camiones/vueltas/{vuelta_id}/confirmar", response_model=ConfirmarResponse)
+async def confirmar_vuelta(
+    vuelta_id: uuid.UUID,
+    req: ConfirmarRequest,
+    identidad: auth.Identidad = Depends(auth.identidad_de_request),
+    _: None = Depends(auth.verificar_api_key),
+) -> ConfirmarResponse:
+    """El conductor toma una vuelta: queda anotado como salido en la planilla.
+
+    `vuelta_id` se tipa como UUID para que FastAPI lo valide: va a parar a un
+    filtro de PostgREST, y una cadena libre ahi es un filtro inyectado.
+    """
+    auth.exigir_perfil(identidad, "camiones")
+    return await camiones.confirmar(get_settings(), identidad, str(vuelta_id), req)
+
+
 # TODO: GET  /v1/proyectos         espejo del directorio, filtrado por dueno
 # TODO: GET  /v1/mapas             fichas de mapas en estado Listo
 # TODO: GET  /v1/mapas/{id}/descarga   URL prefirmada del MBTiles
 # TODO: POST /v1/mapas             sube el original y encola la conversion
 # TODO: POST /v1/archivos          sube KML/GPX/PDF/foto a S3
-# TODO: POST /v1/sync              upsert por UUID de todo lo pendiente

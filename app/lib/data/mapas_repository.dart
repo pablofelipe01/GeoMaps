@@ -109,9 +109,7 @@ class MapasRepository {
   }
 
   Future<void> cambiarVisible(String codigo, bool visible) {
-    return (_db.update(
-      _db.mapas,
-    )..where((m) => m.codigo.equals(codigo))).write(
+    return (_db.update(_db.mapas)..where((m) => m.codigo.equals(codigo))).write(
       MapasCompanion(visible: Value(visible)),
     );
   }
@@ -119,9 +117,7 @@ class MapasRepository {
   /// La opacidad se guarda en la base y no en la pantalla: el tecnico la
   /// ajusta una vez y espera encontrarla asi al dia siguiente.
   Future<void> cambiarOpacidad(String codigo, double opacidad) {
-    return (_db.update(
-      _db.mapas,
-    )..where((m) => m.codigo.equals(codigo))).write(
+    return (_db.update(_db.mapas)..where((m) => m.codigo.equals(codigo))).write(
       MapasCompanion(opacidad: Value(opacidad.clamp(0.1, 1))),
     );
   }

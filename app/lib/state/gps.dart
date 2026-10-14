@@ -39,6 +39,10 @@ class Gps {
 
   /// Ver [Ubicacion.flujo]: se alterna si pasa un rato sin ningun fix.
   bool _soloChipGps = false;
+
+  /// Si el flujo corre como servicio en primer plano, con su notificacion. Lo
+  /// prende quien graba un viaje y lo apaga al terminar.
+  bool _enFondo = false;
   DateTime _inicioFlujo = DateTime.now();
   DateTime? _ultimoFixVivo;
 
@@ -48,6 +52,11 @@ class Gps {
 
   Position? _ultima;
   Object? _error;
+
+  /// La ultima posicion que llego, sin suscribirse. Para una cuenta al pasar,
+  /// como la distancia de cada vuelta en la lista; nula si el GPS no esta
+  /// prendido o todavia no dio nada.
+  Position? get ultima => _ultima;
 
   /// La posicion, empezando por la ultima que se tenga. Quien entra a una
   /// pantalla nueva ve de una donde esta, sin esperar al proximo fix.
@@ -73,6 +82,19 @@ class Gps {
   /// la vez hacen que `geolocator` tire una excepcion.
   void reiniciar() {
     if (_salida.hasListener && !_arrancando) _arrancar();
+  }
+
+  /// Mantiene la ubicacion viva con la pantalla apagada mientras [activo].
+  ///
+  /// Es un ajuste del unico flujo y no un flujo aparte por la misma razon de
+  /// arriba: un segundo `getPositionStream` heredaria el primero y su
+  /// notificacion nunca se prenderia. Cambiarlo reabre el flujo para todos;
+  /// el mapa ni se entera, porque sigue escuchando [posiciones].
+  void grabarEnFondo(bool activo) {
+    if (_enFondo == activo) return;
+    _enFondo = activo;
+    // Si nadie escucha todavia, el ajuste se toma en el proximo arranque.
+    if (_salida.hasListener) _arrancar();
   }
 
   void _prender() {
@@ -135,8 +157,12 @@ class Gps {
     // Distancia minima 0: en el mapa se quiere un fix por segundo aun quieto,
     // para que la precision en pantalla sea la de ahora y para que el vigia
     // sepa distinguir "parado" de "el GPS no entrega".
-    _suscripcion = Ubicacion.flujo(distanciaMinimaM: 0, soloChipGps: _soloChipGps)
-        .listen(
+    _suscripcion =
+        Ubicacion.flujo(
+          distanciaMinimaM: 0,
+          soloChipGps: _soloChipGps,
+          enFondo: _enFondo,
+        ).listen(
           _alFix,
           onError: (Object e) {
             if (e is LocationServiceDisabledException) {

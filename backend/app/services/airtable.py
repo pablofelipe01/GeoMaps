@@ -84,16 +84,38 @@ async def upsert(
     Reintentar una sincronizacion cortada tiene que ser inofensivo, y esto es lo
     que lo hace inofensivo.
     """
-    seguro = codigo.replace("'", "")
-    existente = await buscar_uno(
-        settings, tabla, f"{{{campo_codigo}}}='{seguro}'"
+    existente = await buscar_uno(settings, tabla, formula_codigo(campo_codigo, codigo))
+    return await guardar(
+        settings,
+        tabla,
+        {campo_codigo: codigo, **campos},
+        existente["id"] if existente else None,
     )
-    cuerpo = {"fields": {campo_codigo: codigo, **campos}, "typecast": True}
 
+
+def formula_codigo(campo_codigo: str, codigo: str) -> str:
+    """La formula que encuentra una fila por su UUID."""
+    seguro = codigo.replace("'", "")
+    return f"{{{campo_codigo}}}='{seguro}'"
+
+
+async def guardar(
+    settings: Settings,
+    tabla: str,
+    campos: dict[str, Any],
+    record_id: str | None,
+) -> dict[str, Any]:
+    """PATCH sobre `record_id`, o POST si es None.
+
+    Es la mitad de escritura de `upsert`, aparte para quien ya busco la fila por
+    su cuenta: la sincronizacion la necesita para revisar de quien es antes de
+    pisarla, y buscarla dos veces gasta cupo de los 5 requests por segundo.
+    """
+    cuerpo = {"fields": campos, "typecast": True}
     async with httpx.AsyncClient(timeout=TIMEOUT) as client:
-        if existente:
+        if record_id:
             r = await client.patch(
-                f"{_url(settings, tabla)}/{existente['id']}",
+                f"{_url(settings, tabla)}/{record_id}",
                 headers=_cabeceras(settings),
                 json=cuerpo,
             )
