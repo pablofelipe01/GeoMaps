@@ -156,3 +156,26 @@ def test_sin_manifiesto_por_falla_dice_el_codigo(monkeypatch):
         assert r.json()["falla"] == "NoSuchBucket"
     finally:
         version_app.olvidar_cache()
+
+
+# --- El enlace del QR -----------------------------------------------------
+
+
+def test_descargar_redirige_al_apk_vigente_sin_llave(cliente):
+    r = cliente.get("/descargar", follow_redirects=False)
+    assert r.status_code == 302
+    assert r.headers["location"] == "https://s3/app/geomaps-0.3.0+3.apk"
+    assert r.headers["cache-control"] == "no-store"
+
+
+def test_descargar_sigue_al_manifiesto(cliente):
+    cliente.manifiesto["valor"] = _manifiesto(
+        version_code=4, llave_apk="app/geomaps-0.4.0+4.apk"
+    )
+    r = cliente.get("/descargar", follow_redirects=False)
+    assert r.headers["location"] == "https://s3/app/geomaps-0.4.0+4.apk"
+
+
+def test_descargar_sin_version_publicada(cliente):
+    cliente.manifiesto["valor"] = None
+    assert cliente.get("/descargar", follow_redirects=False).status_code == 503

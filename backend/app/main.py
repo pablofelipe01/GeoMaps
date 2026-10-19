@@ -24,7 +24,8 @@ formularios antes del login y un solo camino despues.
 Toda llamada de la app trae `X-App-Version` (el versionCode del APK). Si esa
 version ya esta bloqueada, el middleware responde 426 antes de llegar al
 endpoint. `GET /v1/version` dice cual es la vigente y de donde bajarla; ver
-`services/version_app.py`.
+`services/version_app.py`. `GET /descargar` es el enlace fijo del codigo QR:
+siempre lleva al APK vigente.
 """
 
 from __future__ import annotations
@@ -33,7 +34,7 @@ import uuid
 from datetime import datetime, timezone
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, PlainTextResponse, RedirectResponse
 from pydantic import BaseModel
 
 from .config import Settings, get_settings
@@ -53,7 +54,13 @@ app = FastAPI(title="GeoMaps API", version="0.1.0")
 # Lo que responde aunque la version del telefono este bloqueada: el ping, y la
 # consulta de version, que es justo lo que una app bloqueada necesita para
 # salir del bloqueo.
-_RUTAS_SIN_CHEQUEO_DE_VERSION = {"/health", "/v1/version", "/docs", "/openapi.json"}
+_RUTAS_SIN_CHEQUEO_DE_VERSION = {
+    "/health",
+    "/v1/version",
+    "/descargar",
+    "/docs",
+    "/openapi.json",
+}
 
 
 @app.middleware("http")
@@ -452,6 +459,35 @@ async def version(
         sha256=manifiesto.sha256,
         apk_url=apk_url,
         ahora=ahora,
+    )
+
+
+@app.get("/descargar", include_in_schema=False)
+async def descargar():
+    """El enlace del codigo QR: redirige al APK vigente.
+
+    El QR se imprime una vez y no cambia; lo que cambia es el manifiesto que
+    escribe `tools/publicar_apk.py`, asi que escanearlo siempre baja la ultima
+    version. No pide `X-API-Key` porque lo abre el navegador del telefono, que
+    no la tiene: es el mismo APK que ya se reparte a mano.
+    """
+    settings = get_settings()
+    manifiesto = await version_app.manifiesto_vigente(settings)
+    if manifiesto is None:
+        return PlainTextResponse(
+            "Todavia no hay una version de GeoMaps publicada.", status_code=503
+        )
+    try:
+        apk_url = almacenamiento.url_lectura(settings, manifiesto.llave_apk)
+    except Exception:  # noqa: BLE001
+        return PlainTextResponse(
+            "No se pudo preparar la descarga. Intenta de nuevo en un rato.",
+            status_code=503,
+        )
+    # 302 y no 301: un 301 lo cachea el navegador y se quedaria con el APK
+    # (y la firma vencida) de la primera vez.
+    return RedirectResponse(
+        apk_url, status_code=302, headers={"Cache-Control": "no-store"}
     )
 
 
