@@ -19,6 +19,16 @@ val firma = Properties().apply {
 }
 val hayFirma = archivoFirma.exists()
 
+// El .aab solo existe para Play Store; el APK es el que se reparte directo y
+// se actualiza solo con ota_update. Play no acepta una app que se instale
+// versiones por fuera de la tienda, asi que al compilar un bundle se suma
+// src/play/AndroidManifest.xml, que quita REQUEST_INSTALL_PACKAGES y el
+// provider de ota_update. La app detecta en runtime que vino de Play y manda a
+// la tienda en vez de bajar el APK. Ver docs/despliegue.md, "Play Store".
+val esParaPlay = gradle.startParameter.taskNames.any {
+    it.contains("bundle", ignoreCase = true)
+}
+
 android {
     namespace = "com.siriusregenerative.geomaps"
     // Fijado en 37 y no heredado de flutter.compileSdkVersion (36) porque algun
@@ -38,6 +48,12 @@ android {
         // en el sistema, pero bajar la compatibilidad a 26 dejaria afuera los
         // telefonos de campo mas viejos, que es justo para quienes es la app.
         isCoreLibraryDesugaringEnabled = true
+    }
+
+    if (esParaPlay) {
+        // El manifiesto de un build type pesa mas que el de main y que los de
+        // los plugins, asi que sus tools:node="remove" ganan.
+        sourceSets.getByName("release").manifest.srcFile("src/play/AndroidManifest.xml")
     }
 
     defaultConfig {

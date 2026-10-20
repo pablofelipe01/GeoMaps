@@ -87,6 +87,11 @@ class Settings(BaseSettings):
     supabase_url: str = ""
     supabase_key: str = ""
 
+    # --- Paginas publicas (/privacidad, /eliminar-cuenta) -------------------
+    # A donde se escribe para ejercer los derechos sobre los datos o pedir la
+    # baja sin la app. Sale publicado en las dos paginas y en la ficha de Play.
+    contacto_privacidad: str = "david@siriusregenerative.com"
+
     # --- Actualizaciones del APK -----------------------------------------
     # El manifiesto de la version vigente. Lo escribe tools/publicar_apk.py y
     # lo lee services/version_app.py. Los dias de gracia viajan adentro del

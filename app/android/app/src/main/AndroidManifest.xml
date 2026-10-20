@@ -25,7 +25,8 @@
 
     <!-- Actualizaciones: el APK se reparte directo, sin Play Store, y la app
          baja e instala la version nueva por su cuenta (ota_update). Android
-         pide a la persona permitir "instalar de esta fuente" la primera vez. -->
+         pide a la persona permitir "instalar de esta fuente" la primera vez.
+         El .aab de Play no lo trae: lo quita src/play/AndroidManifest.xml. -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES"/>
     <!-- ota_update declara estas dos y no hacen falta: INSTALL_PACKAGES es solo
          para apps de sistema, y el APK se baja al almacenamiento interno. -->

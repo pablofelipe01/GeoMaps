@@ -6,6 +6,7 @@ import 'package:google_sign_in/google_sign_in.dart';
 
 import '../core/api_client.dart';
 import '../core/config.dart';
+import '../data/db/app_database.dart';
 import 'providers.dart' show versionLocalProvider;
 
 /// Quien esta usando la app.
@@ -291,6 +292,17 @@ class SesionNotifier extends StateNotifier<EstadoSesion> {
     await _google.signOut();
     await _limpiar();
     state = const EstadoSesion();
+  }
+
+  /// Borra la cuenta en el backend, despues lo suyo en el telefono, y sale.
+  ///
+  /// En ese orden: si el backend falla (sin red, por ejemplo), no se toco nada
+  /// y la persona puede reintentar. Al reves, quedaria con la cuenta viva y
+  /// sin los trazados que todavia no habia subido.
+  Future<void> eliminarCuenta(AppDatabase db) async {
+    await _api.eliminarCuenta();
+    await db.borrarDatosDeCuenta();
+    await salir();
   }
 
   Future<void> _limpiar() async {

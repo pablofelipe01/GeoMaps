@@ -134,6 +134,15 @@ class ApiClient {
     return jsonDecode(utf8.decode(r.bodyBytes)) as Map<String, dynamic>;
   }
 
+  /// Borra la cuenta y todo lo que subio. No tiene vuelta atras.
+  Future<void> eliminarCuenta() async {
+    final r = await _http
+        .delete(_uri('/v1/cuenta'), headers: _cabeceras())
+        // Del otro lado son varias tandas contra Airtable y S3.
+        .timeout(const Duration(seconds: 60));
+    if (r.statusCode != 204) throw _fallo(r);
+  }
+
   /// Las vueltas pendientes por recoger de la planilla de SiriusFleet.
   Future<Map<String, dynamic>> vueltasPendientes() async {
     final r = await _http

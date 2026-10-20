@@ -106,7 +106,9 @@ class BotonActualizar extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final estado = ref.watch(actualizacionProvider);
     final notifier = ref.read(actualizacionProvider.notifier);
-    final tamano = estado.publicada?.tamanoLegible ?? '';
+    final desdePlay = ref.watch(versionLocalProvider)?.desdePlay ?? false;
+    // El tamano es el del APK del bucket; Play baja otra cosa, mas chica.
+    final tamano = desdePlay ? '' : estado.publicada?.tamanoLegible ?? '';
     final colores = Theme.of(context).colorScheme;
 
     return Column(
@@ -125,8 +127,14 @@ class BotonActualizar extends ConsumerWidget {
         ] else
           FilledButton.icon(
             onPressed: estado.verificando ? null : notifier.actualizar,
-            icon: const Icon(Icons.download),
-            label: Text(tamano.isEmpty ? 'Actualizar' : 'Actualizar ($tamano)'),
+            icon: Icon(desdePlay ? Icons.shop : Icons.download),
+            label: Text(
+              desdePlay
+                  ? 'Actualizar en Play Store'
+                  : tamano.isEmpty
+                  ? 'Actualizar'
+                  : 'Actualizar ($tamano)',
+            ),
             style: FilledButton.styleFrom(
               minimumSize: const Size.fromHeight(52),
             ),

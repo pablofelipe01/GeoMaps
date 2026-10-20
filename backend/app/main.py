@@ -34,9 +34,16 @@ import uuid
 from datetime import datetime, timezone
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
-from fastapi.responses import JSONResponse, PlainTextResponse, RedirectResponse
+from fastapi.responses import (
+    HTMLResponse,
+    JSONResponse,
+    PlainTextResponse,
+    RedirectResponse,
+    Response,
+)
 from pydantic import BaseModel
 
+from . import paginas
 from .config import Settings, get_settings
 from .schemas_camiones import ConfirmarRequest, ConfirmarResponse, VueltasResponse
 from .schemas_sync import SyncRequest, SyncResponse
@@ -45,6 +52,7 @@ from .services import (
     almacenamiento,
     auth,
     camiones,
+    cuenta,
     sincronizacion,
     version_app,
 )
@@ -58,6 +66,8 @@ _RUTAS_SIN_CHEQUEO_DE_VERSION = {
     "/health",
     "/v1/version",
     "/descargar",
+    "/privacidad",
+    "/eliminar-cuenta",
     "/docs",
     "/openapi.json",
 }
@@ -203,6 +213,13 @@ async def entrar(
             )
 
     campos_existentes = (existente or {}).get("fields", {})
+    # La misma regla que en la puerta de clave: suspender una cuenta no sirve
+    # de nada si por Google se sigue entrando.
+    if campos_existentes.get("Estado") == "Suspendida":
+        raise HTTPException(
+            status_code=403,
+            detail="Esta cuenta esta suspendida. Escribinos para reactivarla.",
+        )
     codigo_usuario = campos_existentes.get("Codigo usuario") or str(uuid.uuid4())
     rol = campos_existentes.get("Rol") or "Usuario"
     ahora = datetime.now(timezone.utc).isoformat()
@@ -506,6 +523,33 @@ async def yo(
         "correo": identidad.correo,
         "rol": identidad.rol,
     }
+
+
+@app.delete("/v1/cuenta", status_code=204)
+async def eliminar_cuenta(
+    identidad: auth.Identidad = Depends(auth.identidad_de_request),
+    _: None = Depends(auth.verificar_api_key),
+) -> Response:
+    """Borra la cuenta y todo lo que subio. Ver `services/cuenta.py`.
+
+    El JWT sigue siendo valido hasta que vence, pero ya no hay fila a la que
+    colgarle nada: la sincronizacion responde 403. La app borra su copia local
+    y cierra la sesion apenas recibe el 204.
+    """
+    await cuenta.eliminar(get_settings(), identidad)
+    return Response(status_code=204)
+
+
+@app.get("/privacidad", include_in_schema=False)
+async def privacidad() -> HTMLResponse:
+    """La politica de privacidad. Publica: la enlaza la ficha de Play."""
+    return HTMLResponse(paginas.privacidad(get_settings()))
+
+
+@app.get("/eliminar-cuenta", include_in_schema=False)
+async def pagina_eliminar_cuenta() -> HTMLResponse:
+    """Como borrar la cuenta. Play pide una URL para quien ya no tiene la app."""
+    return HTMLResponse(paginas.eliminar_cuenta(get_settings()))
 
 
 @app.post("/v1/sync", response_model=SyncResponse)

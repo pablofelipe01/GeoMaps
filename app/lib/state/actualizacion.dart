@@ -5,6 +5,7 @@ import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:ota_update/ota_update.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../core/api_client.dart';
 import '../core/version_app.dart';
@@ -198,6 +199,7 @@ class ActualizacionNotifier extends StateNotifier<EstadoActualizacion> {
   /// adulterado no llega al instalador.
   Future<void> actualizar() async {
     if (state.descargando) return;
+    if (_local?.desdePlay ?? false) return _abrirPlay();
     await verificar(avisar: true);
     // Sin red no se intenta con la URL guardada: es prefirmada y lo mas
     // probable es que ya haya vencido. El error de `verificar` ya lo dice.
@@ -272,6 +274,26 @@ class ActualizacionNotifier extends StateNotifier<EstadoActualizacion> {
         _terminar(error: _mensajeGenerico);
     }
   }
+
+  /// La copia de Play se actualiza desde Play. Se abre la ficha de la app, que
+  /// muestra el boton Actualizar en cuanto Play tiene la version nueva.
+  Future<void> _abrirPlay() async {
+    state = state.copiar(limpiarError: true);
+    final abrio = await launchUrl(
+      Uri.parse(
+        'https://play.google.com/store/apps/details?id=$_paquete',
+      ),
+      mode: LaunchMode.externalApplication,
+    ).catchError((_) => false);
+    if (!abrio) {
+      state = state.copiar(
+        error: 'No se pudo abrir Play Store. Buscala ahi como GeoMaps y '
+            'toca Actualizar.',
+      );
+    }
+  }
+
+  static const _paquete = 'com.siriusregenerative.geomaps';
 
   static const _mensajeGenerico =
       'No se pudo instalar la actualizacion. Volve a intentar; si sigue '

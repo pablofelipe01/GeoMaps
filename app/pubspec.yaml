@@ -2,7 +2,7 @@ name: geomaps
 description: "Mapas georreferenciados offline: carga el plano del predio, ubicate en el sin senal, marca y mide"
 publish_to: 'none'
 
-version: 0.2.5+7
+version: 0.2.6+9
 
 environment:
   sdk: ^3.13.2
@@ -48,10 +48,6 @@ dependencies:
   # --- GPS --------------------------------------------------------------
   geolocator: ^13.0.2
   permission_handler: ^13.0.1
-  # El trazado tiene que seguir grabando con la pantalla apagada y el telefono
-  # en el bolsillo. Sin servicio en primer plano, Android mata el proceso a los
-  # pocos minutos y el recorrido queda cortado sin aviso.
-  flutter_foreground_task: ^9.1.0
   # Hacia donde mira el telefono estando quieto. El rumbo del GPS sale de dos
   # posiciones seguidas y parado es ruido: sin brujula, la flecha solo aparecia
   # andando y el mapa no podia girar hacia el frente como en un navegador.
@@ -72,9 +68,7 @@ dependencies:
   # telefono un minuto.
   flutter_secure_storage: ^9.2.2
 
-  # --- Camara y archivos -------------------------------------------------
-  camera: ^0.11.0
-  image_picker: ^1.2.3
+  # --- Archivos ----------------------------------------------------------
   # Elegir un archivo del telefono (el PDF de topografia que se importa como
   # capa). Es `file_selector` y no `file_picker`: el segundo sigue sin compilar
   # -8.x contra android-34, muy viejo para esta cadena; 11.x no publica la clase
@@ -96,6 +90,9 @@ dependencies:
   uuid: ^4.6.0
   package_info_plus: ^9.0.1
   ota_update: ^7.1.0
+  # Abrir la ficha de Play Store cuando la app se instalo desde ahi: esa copia
+  # no se actualiza sola con ota_update (ver state/actualizacion.dart).
+  url_launcher: ^6.3.2
   crypto: ^3.0.7
   image: ^4.10.1
 
@@ -110,6 +107,7 @@ dev_dependencies:
   flutter_lints: ^6.0.0
   drift_dev: ^2.20.0
   build_runner: ^2.4.13
+  flutter_launcher_icons: ^0.14.4
 
 flutter:
   uses-material-design: true
@@ -133,3 +131,15 @@ flutter:
     # TODO(marca): traer de sirius_agro los PNG/SVG de marca y las Museo Slab.
     # Mientras no esten, declararlos hace fallar el build antes de compilar.
 
+
+# Iconos de la app: `dart run flutter_launcher_icons` los regenera desde el logo.
+# El adaptativo (Android 8+) usa el mismo PNG como frente, con el margen por
+# defecto del 16%: sin el, el circulo azul de arriba a la derecha queda fuera
+# de la mascara redonda del launcher y se corta.
+flutter_launcher_icons:
+  android: true
+  ios: false
+  image_path: assets/marca/sirius-geo-ruta-s-1024.png
+  adaptive_icon_background: "#FFFFFF"
+  adaptive_icon_foreground: assets/marca/sirius-geo-ruta-s-1024.png
+  min_sdk_android: 24

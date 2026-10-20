@@ -24,10 +24,19 @@ enum EstadoVersion { alDia, desactualizada, bloqueada }
 /// La version que corre en este telefono. Sale de `package_info_plus`, que la
 /// lee del APK: es el `version:` del pubspec, `nombre+code`.
 class VersionLocal {
-  const VersionLocal({required this.code, required this.nombre});
+  const VersionLocal({
+    required this.code,
+    required this.nombre,
+    this.desdePlay = false,
+  });
 
   final int code;
   final String nombre;
+
+  /// La instalo Play Store. Esa copia la firma Google y la actualiza Play: el
+  /// APK del bucket no se puede instalar encima, y el build para Play ni
+  /// siquiera trae el permiso de instalar paquetes.
+  final bool desdePlay;
 }
 
 /// La version vigente segun el ultimo manifiesto que se vio con red.

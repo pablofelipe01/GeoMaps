@@ -26,6 +26,18 @@ part 'app_database.g.dart';
 class AppDatabase extends _$AppDatabase {
   AppDatabase(super.e);
 
+  /// Lo que es de la persona, al dar de baja la cuenta: sus trazados, puntos,
+  /// archivos, historial y su fila. Quedan los proyectos y mapas, que son de
+  /// los predios y no de la cuenta: borrarlos obligaria a volver a bajar
+  /// cientos de MB al entrar con otra.
+  Future<void> borrarDatosDeCuenta() => transaction(() async {
+    await delete(waypoints).go();
+    await delete(archivos).go();
+    await delete(trazados).go();
+    await delete(sincronizaciones).go();
+    await delete(usuarios).go();
+  });
+
   /// Subirlo es obligatorio en cuanto cambie cualquier tabla, junto con su
   /// paso en `onUpgrade`. Ver "Cambiar el esquema" abajo.
   @override

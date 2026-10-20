@@ -67,7 +67,11 @@ Future<VersionLocal?> _versionLocal() async {
     final info = await PackageInfo.fromPlatform();
     final code = int.tryParse(info.buildNumber);
     if (code == null) return null;
-    return VersionLocal(code: code, nombre: info.version);
+    return VersionLocal(
+      code: code,
+      nombre: info.version,
+      desdePlay: info.installerStore == 'com.android.vending',
+    );
   } catch (_) {
     return null;
   }

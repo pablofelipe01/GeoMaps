@@ -131,8 +131,63 @@ def subir(settings: Settings, llave: str, contenido: bytes, content_type: str) -
     return llave
 
 
+def borrar_prefijo(settings: Settings, prefijo: str) -> int:
+    """Borra todo lo que cuelga de `prefijo`, con sus versiones anteriores.
+
+    El bucket tiene versionado: un `delete_objects` comun solo pone una marca
+    de borrado y el dato sigue ahi, recuperable. Para una baja de cuenta eso no
+    es borrar, asi que se recorren las versiones y se borra cada una.
+
+    Si la llave de AWS no tiene permiso sobre las versiones, se borra la
+    version vigente y las anteriores quedan para la regla de ciclo de vida que
+    expira versiones no vigentes a los 30 dias (ver docs/despliegue.md). Fallar
+    aca dejaria la cuenta sin poder borrarse nunca, que es peor.
+
+    Devuelve cuantos objetos (o versiones) borro.
+    """
+    if not prefijo.endswith("/") or prefijo.count("/") < 2:
+        # Un prefijo vacio o de un solo nivel ("proyectos/") borraria el bucket
+        # entero. No hay ningun caso legitimo para eso.
+        raise ValueError(f"Prefijo demasiado amplio para borrar: {prefijo!r}")
+
+    s3 = cliente(settings)
+    borrados = 0
+    try:
+        paginas = s3.get_paginator("list_object_versions").paginate(
+            Bucket=settings.s3_bucket, Prefix=prefijo
+        )
+        for pagina in paginas:
+            objetos = [
+                {"Key": v["Key"], "VersionId": v["VersionId"]}
+                for v in pagina.get("Versions", []) + pagina.get("DeleteMarkers", [])
+            ]
+            borrados += _borrar_lote(s3, settings.s3_bucket, objetos)
+    except ClientError as exc:
+        if exc.response.get("Error", {}).get("Code") != "AccessDenied":
+            raise
+        for pagina in s3.get_paginator("list_objects_v2").paginate(
+            Bucket=settings.s3_bucket, Prefix=prefijo
+        ):
+            objetos = [{"Key": o["Key"]} for o in pagina.get("Contents", [])]
+            borrados += _borrar_lote(s3, settings.s3_bucket, objetos)
+    return borrados
+
+
+def _borrar_lote(s3, bucket: str, objetos: list[dict]) -> int:
+    # delete_objects acepta hasta 1000, que es justo lo que trae cada pagina.
+    if not objetos:
+        return 0
+    r = s3.delete_objects(Bucket=bucket, Delete={"Objects": objetos, "Quiet": True})
+    if r.get("Errors"):
+        primero = r["Errors"][0]
+        raise RuntimeError(
+            f"S3 no borro {len(r['Errors'])} objeto(s); el primero: "
+            f"{primero.get('Key')} ({primero.get('Code')})."
+        )
+    return len(objetos)
+
+
 # TODO: url_escritura(llave, content_type) -> URL prefirmada PUT
-# TODO: borrar_prefijo(prefijo) -- al eliminar un proyecto
 
 
 def llave_geometria(codigo_proyecto: str, codigo_trazado: str) -> str:

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../camiones/camiones_page.dart';
+import '../core/api_client.dart';
 import '../core/ubicacion.dart';
 import '../state/providers.dart';
 import '../state/red.dart';
@@ -118,9 +119,106 @@ class HomePage extends ConsumerWidget {
                 ref.read(sesionProvider.notifier).salir();
               },
             ),
+            ListTile(
+              leading: Icon(
+                Icons.delete_forever,
+                color: Theme.of(context).colorScheme.error,
+              ),
+              title: Text(
+                'Eliminar mi cuenta',
+                style: TextStyle(color: Theme.of(context).colorScheme.error),
+              ),
+              onTap: () {
+                Navigator.pop(hoja);
+                showDialog<void>(
+                  context: context,
+                  barrierDismissible: false,
+                  builder: (_) => const _DialogoBaja(),
+                );
+              },
+            ),
           ],
         ),
       ),
+    );
+  }
+}
+
+/// Confirmar la baja de la cuenta. Play exige que se pueda hacer desde la app.
+///
+/// Dice que tambien se pierde lo que no se sincronizo porque es lo que de
+/// verdad no se recupera: lo subido se borra igual, pero eso la persona ya lo
+/// esta pidiendo.
+class _DialogoBaja extends ConsumerStatefulWidget {
+  const _DialogoBaja();
+
+  @override
+  ConsumerState<_DialogoBaja> createState() => _DialogoBajaState();
+}
+
+class _DialogoBajaState extends ConsumerState<_DialogoBaja> {
+  bool _borrando = false;
+  String? _error;
+
+  Future<void> _eliminar() async {
+    setState(() {
+      _borrando = true;
+      _error = null;
+    });
+    try {
+      await ref
+          .read(sesionProvider.notifier)
+          .eliminarCuenta(ref.read(dbProvider));
+      if (mounted) Navigator.pop(context);
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _borrando = false;
+        _error = e is ApiError
+            ? e.mensaje
+            : 'No se pudo conectar. Busca senal y volve a intentar.';
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final colores = Theme.of(context).colorScheme;
+    return AlertDialog(
+      title: const Text('Eliminar tu cuenta'),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'Se borran tu cuenta y tus recorridos y poligonos, en el servidor '
+            'y en este telefono. Lo que todavia no sincronizaste tambien se '
+            'pierde. No se puede deshacer.',
+          ),
+          if (_borrando) ...[
+            const SizedBox(height: 16),
+            const LinearProgressIndicator(),
+          ],
+          if (_error != null) ...[
+            const SizedBox(height: 12),
+            Text(_error!, style: TextStyle(color: colores.error)),
+          ],
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: _borrando ? null : () => Navigator.pop(context),
+          child: const Text('Cancelar'),
+        ),
+        FilledButton(
+          style: FilledButton.styleFrom(
+            backgroundColor: colores.error,
+            foregroundColor: colores.onError,
+          ),
+          onPressed: _borrando ? null : _eliminar,
+          child: const Text('Eliminar'),
+        ),
+      ],
     );
   }
 }

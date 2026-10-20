@@ -374,6 +374,13 @@ El orden importa: borrar primero al usuario deja archivos en S3 sin forma de
 saber de quien eran. No hay que dar de baja nada en Google — la cuenta es de la
 persona, nosotros solo dejamos de reconocer su `sub`.
 
+Lo hace `DELETE /v1/cuenta` (`services/cuenta.py`), que la app llama desde
+"Mi cuenta > Eliminar mi cuenta". Tambien borra sus `Sincronizaciones` y
+`Dispositivos`. Las cuentas `Soporte` y `Admin` no se dan de baja solas: pueden
+ser duenas de proyectos de la empresa, y esas se borran a mano. Quien pide la
+baja por correo (ver `/eliminar-cuenta`) se da de baja a mano siguiendo estos
+mismos pasos.
+
 ---
 
 ## Reglas que aplica el backend, no el modelo

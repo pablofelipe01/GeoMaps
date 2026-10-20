@@ -159,12 +159,91 @@ apps de esta fuente" para GeoMaps. Es un permiso por app y se da una sola vez.
 |---|---|---|
 | Ubicacion precisa | Todo | Al abrir el mapa |
 | Ubicacion en segundo plano | Grabar un trazado con la pantalla apagada | Solo al iniciar el primer trazado, explicando por que |
-| Camara | Fotos de waypoints | Al tomar la primera |
+| Camara | Escanear el QR de vueltas pendientes (camiones) | Al abrir el escaner |
 | Almacenamiento | Importar un MBTiles del telefono | Al importar |
 
 El de segundo plano se pide aparte y tarde a proposito: Android muestra un
 dialogo severo, y pedirlo en el primer arranque sin contexto hace que la gente
 lo niegue y despues no entienda por que el trazado se corta.
+
+## Play Store
+
+Ademas del APK directo, la app sale por Play (por ahora en prueba interna). Es
+el mismo codigo y el mismo `versionCode`, con dos diferencias:
+
+- **No se actualiza sola.** Play no acepta una app que se instale versiones por
+  fuera de la tienda. Al compilar un `.aab`, `build.gradle.kts` suma
+  `app/android/app/src/play/AndroidManifest.xml`, que quita
+  `REQUEST_INSTALL_PACKAGES` y el provider de `ota_update`. La app se da cuenta
+  en runtime de que la instalo Play (`VersionLocal.desdePlay`) y el boton de
+  actualizar abre la ficha de la tienda. El aviso y el bloqueo a los 10 dias
+  siguen igual, asi que la version hay que subirla a Play **el mismo dia** que
+  se corre `publicar_apk.py`.
+- **La firma.** Ver abajo.
+
+### Compilar y subir
+
+1. Subir la version en `pubspec.yaml`, igual que para el APK.
+2. Compilar y revisar:
+
+   ```bash
+   backend/.venv/Scripts/python tools/compilar_play.py
+   ```
+
+   Compila con `dart_defines.json` (sin el, el bundle instala pero no puede
+   iniciar sesion), y se niega si sale con la llave de debug o con un permiso
+   que Play objeta.
+3. En Play Console, arrastrar `app/build/app/outputs/bundle/release/app-release.aab`
+   a la version nueva del track.
+
+No usar `flutter build appbundle` a secas: es justo el bundle sin
+`dart_defines.json`.
+
+### La llave de firma en Play
+
+La primera vez, Play pregunta con que llave firmar lo que instala. Elegir
+**usar la llave existente** (la de `geomaps-release.jks`, exportada con la
+herramienta PEPK que da Play Console) y no la que genera Google. Con la misma
+llave:
+
+- Quien tiene el APK directo puede pasarse a Play (y al reves) sin desinstalar,
+  que borraria lo que no se sincronizo.
+- La SHA-1 ya esta registrada en el client id de Android de Google Cloud, y el
+  login con Google anda sin tocar nada.
+
+Si se acepto la llave de Google, hay que registrar **tambien** la SHA-1 de
+"App signing key certificate" (Play Console, Integridad de la app) en el client
+id de Android, o el login falla con `ApiException: 10` solo en la copia de
+Play.
+
+### Privacidad y baja de cuenta
+
+Play exige las dos, y las sirve el mismo backend (`app/paginas.py`):
+
+- `https://geo-maps-seven.vercel.app/privacidad`
+- `https://geo-maps-seven.vercel.app/eliminar-cuenta`
+
+El correo de contacto que publican sale de `CONTACTO_PRIVACIDAD` (por defecto
+el de `config.py`). Lo que dicen tiene que coincidir con lo que la app hace: si
+empieza a juntar algo nuevo, se cambian las paginas y el formulario de
+seguridad de datos el mismo dia.
+
+La baja (`DELETE /v1/cuenta`) borra en S3 con las versiones anteriores, porque
+el bucket tiene versionado. Para eso la llave de AWS del backend necesita
+`s3:ListBucketVersions`, `s3:DeleteObject` y `s3:DeleteObjectVersion` sobre el
+bucket. Si no los tiene, borra la version vigente y las anteriores quedan; por
+eso el bucket lleva tambien una regla de ciclo de vida que **expira las
+versiones no vigentes a los 30 dias**, que es el plazo que promete la politica.
+
+### Lo que pide Play Console en "Contenido de la app"
+
+| Formulario | Que poner |
+|---|---|
+| Politica de privacidad | `https://geo-maps-seven.vercel.app/privacidad` |
+| Eliminacion de cuenta (en Seguridad de los datos) | `https://geo-maps-seven.vercel.app/eliminar-cuenta` |
+| Permisos de servicio en primer plano | `location`: grabar el viaje del camion con la pantalla apagada. Pide un video corto mostrandolo |
+| Seguridad de los datos | Ubicacion precisa y aproximada; nombre, correo e ID de usuario; "otra informacion personal" (la cedula, solo camiones). Todo recolectado, obligatorio, para la funcion de la app, cifrado en transito y sin compartir con terceros |
+| Clasificacion de contenido, publico objetivo | Herramienta de trabajo, mayores de 18 |
 
 ## Base de Airtable
 

@@ -127,6 +127,40 @@ async def guardar(
     return r.json()
 
 
+async def listar(settings: Settings, tabla: str, formula: str) -> list[dict[str, Any]]:
+    """Todas las filas que cumplen la formula, recorriendo las paginas.
+
+    Airtable devuelve de a 100 y un `offset` para seguir. Quien pide "todas"
+    y se queda con la primera pagina borra o informa a medias sin enterarse.
+    """
+    filas: list[dict[str, Any]] = []
+    params: dict[str, Any] = {"filterByFormula": formula}
+    async with httpx.AsyncClient(timeout=TIMEOUT) as client:
+        while True:
+            r = await client.get(
+                _url(settings, tabla), headers=_cabeceras(settings), params=params
+            )
+            _revisar(r, tabla)
+            cuerpo = r.json()
+            filas.extend(cuerpo.get("records", []))
+            if not cuerpo.get("offset"):
+                return filas
+            params["offset"] = cuerpo["offset"]
+
+
+async def borrar(settings: Settings, tabla: str, record_ids: list[str]) -> None:
+    """Borra filas por record id, de a 10: el maximo que acepta la API por
+    llamada. Sin ids no llama a nada."""
+    async with httpx.AsyncClient(timeout=TIMEOUT) as client:
+        for i in range(0, len(record_ids), 10):
+            r = await client.delete(
+                _url(settings, tabla),
+                headers=_cabeceras(settings),
+                params=[("records[]", rid) for rid in record_ids[i : i + 10]],
+            )
+            _revisar(r, tabla)
+
+
 def _revisar(r: httpx.Response, tabla: str) -> None:
     if r.status_code == 404:
         raise HTTPException(

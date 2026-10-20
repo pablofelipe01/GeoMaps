@@ -1,0 +1,22 @@
+<!-- Solo entra al compilar un .aab (ver esParaPlay en build.gradle.kts).
+
+     Play no permite que una app se instale versiones por fuera de la tienda,
+     asi que la copia de Play no trae el permiso ni el provider de ota_update:
+     la actualiza Play, y la app manda a la tienda en vez de bajar el APK
+     (ver VersionLocal.desdePlay). -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES"
+        tools:node="remove"/>
+    <!-- Nadie lo pide: Gradle lo agrega solo porque ota_update declara
+         WRITE_EXTERNAL_STORAGE. Sin ota_update no tiene razon de estar, y
+         asomaria en el formulario de seguridad de datos. -->
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"
+        tools:node="remove"/>
+
+    <application>
+        <provider
+            android:name="sk.fourq.otaupdate.OtaUpdateFileProvider"
+            tools:node="remove"/>
+    </application>
+</manifest>
