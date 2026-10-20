@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../camiones/camiones_page.dart';
 import '../core/api_client.dart';
+import '../core/enlaces.dart';
 import '../core/ubicacion.dart';
 import '../state/providers.dart';
 import '../state/red.dart';
@@ -94,50 +95,61 @@ class HomePage extends ConsumerWidget {
 
     showModalBottomSheet<void>(
       context: context,
+      // Con el telefono acostado la hoja topa en 9/16 del alto, y sin esto
+      // "Eliminar mi cuenta" quedaba cortada abajo sin forma de llegar a ella.
+      isScrollControlled: true,
       builder: (hoja) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            ListTile(
-              leading: _Avatar(foto: sesion.foto, nombre: sesion.nombre),
-              title: Text(sesion.nombre),
-              subtitle: Text(sesion.correo),
-            ),
-            const Divider(height: 1),
-            ListTile(
-              leading: const Icon(Icons.schedule),
-              title: Text('Sesion valida ${sesion.diasRestantes} dias mas'),
-              subtitle: const Text(
-                'Podes trabajar sin senal durante ese plazo.',
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              ListTile(
+                leading: _Avatar(foto: sesion.foto, nombre: sesion.nombre),
+                title: Text(sesion.nombre),
+                subtitle: Text(sesion.correo),
               ),
-            ),
-            ListTile(
-              leading: const Icon(Icons.logout),
-              title: const Text('Cerrar sesion'),
-              onTap: () {
-                Navigator.pop(hoja);
-                ref.read(sesionProvider.notifier).salir();
-              },
-            ),
-            ListTile(
-              leading: Icon(
-                Icons.delete_forever,
-                color: Theme.of(context).colorScheme.error,
+              const Divider(height: 1),
+              ListTile(
+                leading: const Icon(Icons.schedule),
+                title: Text('Sesion valida ${sesion.diasRestantes} dias mas'),
+                subtitle: const Text(
+                  'Podes trabajar sin senal durante ese plazo.',
+                ),
               ),
-              title: Text(
-                'Eliminar mi cuenta',
-                style: TextStyle(color: Theme.of(context).colorScheme.error),
+              ListTile(
+                leading: const Icon(Icons.privacy_tip_outlined),
+                title: const Text('Politica de privacidad'),
+                trailing: const Icon(Icons.open_in_new, size: 18),
+                onTap: () => Enlaces.abrir(Enlaces.privacidad),
               ),
-              onTap: () {
-                Navigator.pop(hoja);
-                showDialog<void>(
-                  context: context,
-                  barrierDismissible: false,
-                  builder: (_) => const _DialogoBaja(),
-                );
-              },
-            ),
-          ],
+              ListTile(
+                leading: const Icon(Icons.logout),
+                title: const Text('Cerrar sesion'),
+                onTap: () {
+                  Navigator.pop(hoja);
+                  ref.read(sesionProvider.notifier).salir();
+                },
+              ),
+              ListTile(
+                leading: Icon(
+                  Icons.delete_forever,
+                  color: Theme.of(context).colorScheme.error,
+                ),
+                title: Text(
+                  'Eliminar mi cuenta',
+                  style: TextStyle(color: Theme.of(context).colorScheme.error),
+                ),
+                onTap: () {
+                  Navigator.pop(hoja);
+                  showDialog<void>(
+                    context: context,
+                    barrierDismissible: false,
+                    builder: (_) => const _DialogoBaja(),
+                  );
+                },
+              ),
+            ],
+          ),
         ),
       ),
     );

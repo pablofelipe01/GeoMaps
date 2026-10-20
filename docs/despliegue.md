@@ -157,14 +157,16 @@ apps de esta fuente" para GeoMaps. Es un permiso por app y se da una sola vez.
 
 | Permiso | Para que | Cuando se pide |
 |---|---|---|
-| Ubicacion precisa | Todo | Al abrir el mapa |
-| Ubicacion en segundo plano | Grabar un trazado con la pantalla apagada | Solo al iniciar el primer trazado, explicando por que |
+| Ubicacion precisa | Todo | Despues del login, cuando la persona toca Continuar en el aviso de GeoMaps (`AvisoUbicacionPage`), que explica para que se usa y que se sube. Play pide ese aviso propio antes del dialogo de Android |
+| Notificaciones | La notificacion fija mientras se graba un viaje con la pantalla apagada (servicio en primer plano de tipo `location`) | Al iniciar el primer viaje |
 | Camara | Escanear el QR de vueltas pendientes (camiones) | Al abrir el escaner |
-| Almacenamiento | Importar un MBTiles del telefono | Al importar |
+| Almacenamiento | Importar un plano del telefono | No pide permiso: el selector de archivos de Android da acceso solo al archivo elegido |
 
-El de segundo plano se pide aparte y tarde a proposito: Android muestra un
-dialogo severo, y pedirlo en el primer arranque sin contexto hace que la gente
-lo niegue y despues no entienda por que el trazado se corta.
+La app **no** pide ubicacion en segundo plano (`ACCESS_BACKGROUND_LOCATION`):
+grabar con la pantalla apagada lo resuelve el servicio en primer plano, que
+Android permite con el permiso normal mientras la notificacion este visible.
+Pedir el de segundo plano obligaria a otra declaracion en Play y a un dialogo
+mucho mas severo, sin ganar nada.
 
 ## Play Store
 

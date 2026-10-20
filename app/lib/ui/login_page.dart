@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../core/enlaces.dart';
 import '../state/sesion.dart';
 
 /// Entrada y registro. Dos puertas, una pantalla.
@@ -266,6 +267,13 @@ class _LoginPageState extends ConsumerState<LoginPage> {
                       fontSize: 13,
                       color: colores.onSurfaceVariant,
                     ),
+                  ),
+                  const SizedBox(height: 8),
+                  // Aca y no solo en el perfil: quien crea la cuenta tiene que
+                  // poder leer que se hace con sus datos antes de crearla.
+                  TextButton(
+                    onPressed: () => Enlaces.abrir(Enlaces.privacidad),
+                    child: const Text('Politica de privacidad'),
                   ),
 
                   if (estado.error != null) ...[

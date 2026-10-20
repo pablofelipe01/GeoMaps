@@ -6,9 +6,11 @@ import 'package:path_provider/path_provider.dart';
 
 import 'core/version_app.dart';
 import 'state/actualizacion.dart';
+import 'state/aviso_ubicacion.dart';
 import 'state/providers.dart';
 import 'state/sesion.dart';
 import 'ui/actualizacion_page.dart';
+import 'ui/aviso_ubicacion_page.dart';
 import 'ui/home_page.dart';
 import 'ui/login_page.dart';
 import 'ui/theme.dart';
@@ -112,6 +114,14 @@ class _Puerta extends ConsumerWidget {
     if (estado.cargando && estado.sesion == null && estado.error == null) {
       return const Scaffold(body: Center(child: CircularProgressIndicator()));
     }
-    return estado.autenticado ? const HomePage() : const LoginPage();
+    if (!estado.autenticado) return const LoginPage();
+
+    // El aviso va antes del inicio porque el inicio arranca el GPS, y el GPS
+    // pide el permiso: el aviso tiene que llegar antes que el dialogo.
+    final aviso = ref.watch(avisoUbicacionProvider);
+    if (aviso == null) {
+      return const Scaffold(body: Center(child: CircularProgressIndicator()));
+    }
+    return aviso ? const HomePage() : const AvisoUbicacionPage();
   }
 }
