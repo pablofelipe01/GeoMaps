@@ -1,3 +1,5 @@
+import 'dart:io' show Platform;
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -223,35 +225,40 @@ class _LoginPageState extends ConsumerState<LoginPage> {
                     ),
                   ),
 
-                  const SizedBox(height: 24),
-                  Row(
-                    children: [
-                      const Expanded(child: Divider()),
-                      Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 12),
-                        child: Text(
-                          'o',
-                          style: TextStyle(color: colores.onSurfaceVariant),
+                  // En iOS no hay client OAuth de tipo iOS todavia: sin el,
+                  // google_sign_in cierra la app al tocar el boton. Hasta
+                  // crearlo, en iPhone se entra solo con correo y clave.
+                  if (!Platform.isIOS) ...[
+                    const SizedBox(height: 24),
+                    Row(
+                      children: [
+                        const Expanded(child: Divider()),
+                        Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 12),
+                          child: Text(
+                            'o',
+                            style: TextStyle(color: colores.onSurfaceVariant),
+                          ),
+                        ),
+                        const Expanded(child: Divider()),
+                      ],
+                    ),
+                    const SizedBox(height: 24),
+
+                    SizedBox(
+                      width: double.infinity,
+                      child: OutlinedButton.icon(
+                        onPressed: cargando
+                            ? null
+                            : () => ref.read(sesionProvider.notifier).entrar(),
+                        icon: const Icon(Icons.login),
+                        label: const Padding(
+                          padding: EdgeInsets.symmetric(vertical: 14),
+                          child: Text('Continuar con Google'),
                         ),
                       ),
-                      const Expanded(child: Divider()),
-                    ],
-                  ),
-                  const SizedBox(height: 24),
-
-                  SizedBox(
-                    width: double.infinity,
-                    child: OutlinedButton.icon(
-                      onPressed: cargando
-                          ? null
-                          : () => ref.read(sesionProvider.notifier).entrar(),
-                      icon: const Icon(Icons.login),
-                      label: const Padding(
-                        padding: EdgeInsets.symmetric(vertical: 14),
-                        child: Text('Continuar con Google'),
-                      ),
                     ),
-                  ),
+                  ],
 
                   const SizedBox(height: 22),
 

@@ -1,3 +1,5 @@
+import 'dart:io' show Platform;
+
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -62,7 +64,13 @@ Future<void> _prepararCacheMapa() async {
 
 /// La version de este APK, leida del propio APK: no toca la red. Si no se
 /// puede leer, la app arranca igual y simplemente no se bloquea.
+///
+/// En iOS no hay version local a proposito: el canal de actualizaciones es de
+/// APK y su versionCode es el de Android. Sin ella no se manda X-App-Version,
+/// el backend no le responde 426 a un iPhone por una regla de Android, y la
+/// actualizacion queda en manos de TestFlight / App Store.
 Future<VersionLocal?> _versionLocal() async {
+  if (Platform.isIOS) return null;
   try {
     final info = await PackageInfo.fromPlatform();
     final code = int.tryParse(info.buildNumber);

@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io' show Platform;
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
@@ -289,7 +290,9 @@ class SesionNotifier extends StateNotifier<EstadoSesion> {
   Future<void> salir() async {
     // Inofensivo si la persona entro con clave: sin sesion de Google abierta,
     // `signOut` no hace nada. Una rama por proveedor aca no compraria nada.
-    await _google.signOut();
+    // En iOS no hay boton de Google (ver login_page.dart), y sin client id
+    // de iOS el plugin no se puede ni inicializar.
+    if (!Platform.isIOS) await _google.signOut();
     await _limpiar();
     state = const EstadoSesion();
   }

@@ -138,7 +138,10 @@ flutter:
 # de la mascara redonda del launcher y se corta.
 flutter_launcher_icons:
   android: true
-  ios: false
+  ios: true
+  # App Store rechaza el icono de iOS con canal alfa.
+  remove_alpha_ios: true
+  background_color_ios: "#FFFFFF"
   image_path: assets/marca/sirius-geo-ruta-s-1024.png
   adaptive_icon_background: "#FFFFFF"
   adaptive_icon_foreground: assets/marca/sirius-geo-ruta-s-1024.png

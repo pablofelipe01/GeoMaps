@@ -1,3 +1,5 @@
+import 'dart:io' show Platform;
+
 import 'package:geolocator/geolocator.dart';
 
 /// El GPS: permisos, lecturas y los dos filtros que hacen util un trazado.
@@ -82,6 +84,25 @@ class Ubicacion {
     if (cache != null) {
       _deCache[cache] = true;
       yield cache;
+    }
+
+    if (Platform.isIOS) {
+      yield* Geolocator.getPositionStream(
+        locationSettings: AppleSettings(
+          accuracy: LocationAccuracy.best,
+          distanceFilter: distanciaMinimaM,
+          activityType: ActivityType.otherNavigation,
+          // iOS pausa la ubicacion sola si cree que el telefono no se mueve,
+          // y un camion parado en el patio no es un viaje terminado.
+          pauseLocationUpdatesAutomatically: false,
+          // El equivalente del servicio en primer plano de Android: con la
+          // pantalla apagada sigue, y la barra azul de iOS le avisa al
+          // conductor. Exige UIBackgroundModes=location en el Info.plist.
+          allowBackgroundLocationUpdates: enFondo,
+          showBackgroundLocationIndicator: enFondo,
+        ),
+      );
+      return;
     }
 
     yield* Geolocator.getPositionStream(
