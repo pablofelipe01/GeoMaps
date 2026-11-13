@@ -45,7 +45,7 @@ from ..schemas_sync import (
     TrazadoSync,
     WaypointSync,
 )
-from . import airtable, almacenamiento, geometria
+from . import airtable, almacenamiento, camiones, geometria
 from .auth import Identidad, formula_del_duenno
 
 PROYECTO_LOCAL = "local"
@@ -79,6 +79,7 @@ async def sincronizar(
     proyectos: dict[str, tuple[str, str]] = {}
     resultados: list[ResultadoItem] = []
     for t in req.trazados:
+        await _cerrar_vuelta(settings, identidad, t)
         try:
             if t.proyecto_codigo not in proyectos:
                 proyectos[t.proyecto_codigo] = await _proyecto(
@@ -249,6 +250,29 @@ async def _trazado(
             raise
         await airtable.guardar(settings, tabla, campos, record_id)
     return llave
+
+
+async def _cerrar_vuelta(
+    settings: Settings, identidad: Identidad, t: TrazadoSync
+) -> None:
+    """Si el recorrido es de una vuelta de camiones, guarda su seguimiento.
+
+    Va antes de subir la geometria y no depende de ella: cerrar la vuelta es
+    lo que le permite al conductor tomar la siguiente, y eso no puede esperar
+    a que S3 acepte el archivo. Nunca hace fallar el trazado: si no se pudo,
+    el recorrido sube igual y el seguimiento se reintenta con el.
+    """
+    if t.viaje is None:
+        return
+    try:
+        await camiones.seguimiento(
+            settings,
+            identidad,
+            t.viaje.codigo,
+            t.viaje.model_copy(update={"trazado": t.viaje.trazado or t.codigo}),
+        )
+    except Exception:  # noqa: BLE001
+        pass
 
 
 def _calificacion(t: TrazadoSync) -> dict[str, Any]:

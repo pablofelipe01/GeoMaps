@@ -337,14 +337,23 @@ class TrazadosRepository {
   /// Guarda la linea grabada hasta ahora. Se llama cada tantos puntos, no por
   /// cada fix: reescribir la fila una vez por segundo durante dos horas es
   /// gastar disco y bateria en algo que no se mira.
-  Future<void> guardarAvance(String codigo, List<PuntoGeo> puntos) async {
+  ///
+  /// [propiedades] se suma a las que el recorrido ya tenia: es por donde
+  /// entra lo que pasa a mitad de camino, como haber llegado a los vagones.
+  Future<void> guardarAvance(
+    String codigo,
+    List<PuntoGeo> puntos, {
+    Map<String, Object?> propiedades = const {},
+  }) async {
     final fila = await _fila(codigo);
     if (fila == null) return;
     await (_db.update(
       _db.trazados,
     )..where((t) => t.codigo.equals(codigo))).write(
       TrazadosCompanion(
-        geometria: Value(_conPuntos(fila.geometria, puntos)),
+        geometria: Value(
+          _conPuntos(fila.geometria, puntos, extra: propiedades),
+        ),
         puntos: Value(puntos.length),
       ),
     );

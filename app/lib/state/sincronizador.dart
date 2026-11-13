@@ -6,6 +6,7 @@ import 'package:drift/drift.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:uuid/uuid.dart';
 
+import '../camiones/seguimiento.dart';
 import '../core/api_client.dart';
 import '../data/db/app_database.dart';
 import '../data/db/enums.dart';
@@ -191,6 +192,12 @@ class Sincronizador extends StateNotifier<EstadoSincronizacion> {
     // puede filtrar sin bajar el archivo.
     final propiedades =
         geometria['properties'] as Map<String, dynamic>? ?? const {};
+    // Si es la vuelta de un camion, su seguimiento viaja con el recorrido:
+    // es lo que la cierra en el servidor cuando se finalizo sin senal.
+    final viaje = SeguimientoVuelta.cuerpo(
+      propiedades,
+      recorridoM: t.distanciaM,
+    );
     return {
       'codigo': t.codigo,
       'proyecto_codigo': t.proyectoCodigo,
@@ -204,6 +211,7 @@ class Sincronizador extends StateNotifier<EstadoSincronizacion> {
         'calificacion_motivos': propiedades['calificacion_motivos'],
       if (propiedades['calificacion_comentario'] is String)
         'calificacion_comentario': propiedades['calificacion_comentario'],
+      if (viaje != null) 'viaje': {'codigo': propiedades['viaje'], ...viaje},
       'distancia_m': t.distanciaM,
       'area_ha': t.areaHa,
       'precision_media_m': t.precisionMediaM,

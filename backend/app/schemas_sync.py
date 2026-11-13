@@ -15,6 +15,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
+from .schemas_camiones import ViajeSync
+
 TIPOS_TRAZADO: dict[str, str] = {"ruta": "Ruta", "poligono": "Poligono"}
 
 METODOS_CAPTURA: dict[str, str] = {
@@ -71,6 +73,11 @@ class TrazadoSync(BaseModel):
     calificacion: int | None = Field(default=None, ge=1, le=5)
     calificacion_motivos: list[str] | None = Field(default=None, max_length=10)
     calificacion_comentario: str | None = Field(default=None, max_length=2000)
+
+    # Si el recorrido es el de una vuelta de camiones: su seguimiento -cuando
+    # llego, cuando volvio, cuando finalizo-. Es por donde se cierra la vuelta
+    # cuando el telefono la finalizo sin senal.
+    viaje: ViajeSync | None = None
 
 
 # El `.name` del enum de Dart -> la opcion del Single select `Simbolo`.

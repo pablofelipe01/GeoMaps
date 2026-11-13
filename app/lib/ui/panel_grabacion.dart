@@ -3,6 +3,7 @@ import 'package:flutter_map/flutter_map.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:latlong2/latlong.dart';
 
+import '../camiones/panel_viaje.dart' show terminarViaje;
 import '../core/geo.dart';
 import '../state/grabacion.dart';
 import 'calificar_ruta.dart';
@@ -75,6 +76,9 @@ Future<bool> iniciarRecorrido(BuildContext context, WidgetRef ref) async {
 /// Pregunta y cierra la grabacion en curso. Devuelve si se cerro.
 Future<bool> terminarRecorrido(BuildContext context, WidgetRef ref) async {
   final g = ref.read(grabadorProvider);
+  // La vuelta de un camion no se corta como un recorrido cualquiera: se
+  // finaliza con sus reglas, se llegue aca desde donde se llegue.
+  if (g.esVuelta) return terminarViaje(context, ref);
   // Una ruta iniciada desde el mapa se termina calificandola, se cierre desde
   // donde se cierre.
   if (g.propiedades['tipo'] == 'navegacion') {

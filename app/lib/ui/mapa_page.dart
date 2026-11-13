@@ -11,6 +11,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:latlong2/latlong.dart';
 
+import '../camiones/panel_viaje.dart' show PanelViaje;
 import '../core/acopios.dart';
 import '../core/geo.dart';
 import '../core/parcelas.dart';
@@ -868,8 +869,8 @@ class _MapaPageState extends ConsumerState<MapaPage>
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                // Con un viaje de camion en curso la grabacion es del viaje:
-                // se termina desde su franja, no desde aca.
+                // Con la vuelta de un camion en curso la grabacion es de la
+                // vuelta: se finaliza desde su franja, no desde aca.
                 if (g.codigo == null)
                   ListTile(
                     leading: const Icon(
@@ -883,7 +884,7 @@ class _MapaPageState extends ConsumerState<MapaPage>
                     ),
                     onTap: () => hacer(() => iniciarRecorrido(context, ref)),
                   )
-                else if (widget.panelSuperior == null)
+                else if (!g.esVuelta)
                   ListTile(
                     leading: const Icon(Icons.stop_circle_outlined),
                     title: const Text('Terminar el recorrido'),
@@ -1244,9 +1245,16 @@ class _MapaPageState extends ConsumerState<MapaPage>
               right: 12,
               // Con una ruta iniciada la tarjeta de abajo ya dice que se
               // graba y desde ella se termina: dos franjas dirian lo mismo.
-              child:
-                  widget.panelSuperior ??
-                  (enRuta ? const SizedBox.shrink() : const PanelGrabacion()),
+              //
+              // La vuelta de un camion lleva siempre su franja, se haya
+              // abierto el mapa desde donde se haya abierto: es la unica
+              // que sabe si ya se puede finalizar.
+              child: grabacion.esVuelta
+                  ? const PanelViaje()
+                  : widget.panelSuperior ??
+                        (enRuta
+                            ? const SizedBox.shrink()
+                            : const PanelGrabacion()),
             ),
 
             // La pista de como se pide una ruta, arriba y no abajo: abajo pelea

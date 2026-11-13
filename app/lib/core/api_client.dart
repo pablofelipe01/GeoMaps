@@ -154,24 +154,54 @@ class ApiClient {
 
   /// El conductor toma una vuelta.
   ///
-  /// [cedula] hace falta la primera vez; despues queda atada a la cuenta.
   /// [clave] solo en las cuentas que tienen una: las de Google confirman con
   /// la sesion. Lo que no se manda no viaja como texto vacio, viaja ausente.
+  /// [salida] es donde esta el camion al tomarla (`lat`, `lon`,
+  /// `precision_m`): de ahi sale y ahi tiene que volver.
   Future<Map<String, dynamic>> confirmarVuelta(
     String vueltaId, {
-    String? cedula,
     String? clave,
+    Map<String, Object?>? salida,
   }) async {
     final r = await _http
         .post(
           _uri('/v1/camiones/vueltas/$vueltaId/confirmar'),
           headers: _cabeceras(),
           body: jsonEncode({
-            if (cedula != null && cedula.isNotEmpty) 'cedula': cedula,
             if (clave != null && clave.isNotEmpty) 'clave': clave,
+            'salida': ?salida,
           }),
         )
         .timeout(const Duration(seconds: 30));
+    if (r.statusCode != 200) throw _fallo(r);
+    return jsonDecode(utf8.decode(r.bodyBytes)) as Map<String, dynamic>;
+  }
+
+  /// La vuelta sin finalizar de esta cuenta, segun el servidor: `control`
+  /// dice si esta llevando el seguimiento, y `viaje` cual tiene abierta.
+  Future<Map<String, dynamic>> miViaje() async {
+    final r = await _http
+        .get(_uri('/v1/camiones/viaje'), headers: _cabeceras())
+        .timeout(const Duration(seconds: 20));
+    if (r.statusCode != 200) throw _fallo(r);
+    return jsonDecode(utf8.decode(r.bodyBytes)) as Map<String, dynamic>;
+  }
+
+  /// Avisa por donde va la vuelta: llego a los vagones, volvio, la finalizo.
+  /// Manda todo lo que se sabe del viaje, asi que repetirlo no hace dano.
+  Future<Map<String, dynamic>> seguimientoViaje(
+    String codigo,
+    Map<String, Object?> cuerpo,
+  ) async {
+    final r = await _http
+        .post(
+          _uri('/v1/camiones/viajes/$codigo/seguimiento'),
+          headers: _cabeceras(),
+          body: jsonEncode(cuerpo),
+        )
+        // Corto a proposito: se llama al finalizar, con el conductor
+        // esperando. Lo que no llegue sube despues con el recorrido.
+        .timeout(const Duration(seconds: 10));
     if (r.statusCode != 200) throw _fallo(r);
     return jsonDecode(utf8.decode(r.bodyBytes)) as Map<String, dynamic>;
   }

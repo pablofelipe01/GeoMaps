@@ -357,3 +357,78 @@ def test_una_calificacion_fuera_de_rango_no_entra():
         _ruta(calificacion=0)
     with pytest.raises(ValidationError):
         _ruta(calificacion=6)
+
+
+# ------------------- El recorrido de una vuelta de camiones -------------------
+
+VIAJE = {
+    "codigo": "6f1c2b9e-0000-4000-8000-0000000000aa",
+    "llegada": {"en": "2026-10-14T15:20:00Z", "lat": 4.45, "lon": -72.96, "distancia_m": 30},
+    "regreso": {"en": "2026-10-14T15:50:00Z", "lat": 4.40, "lon": -72.90},
+    "fin": {"en": "2026-10-14T15:52:00Z", "lat": 4.40, "lon": -72.90, "distancia_m": 8},
+    "recorrido_m": 11842.0,
+}
+
+
+async def test_el_recorrido_de_una_vuelta_la_cierra(base, monkeypatch):
+    """Finalizar sin senal: la vuelta se cierra cuando sube el recorrido, y
+    con eso el conductor puede tomar la siguiente."""
+    from app.services import camiones
+
+    avisos = []
+
+    async def seguimiento(settings, identidad, codigo, req):
+        avisos.append((identidad.auth_uid, codigo, req))
+
+    monkeypatch.setattr(camiones, "seguimiento", seguimiento)
+    r = await _sync(YO, _ruta("viaje-0001", metodo="automatico", viaje=VIAJE))
+
+    assert r.trazados[0].ok
+    (quien, codigo, req), = avisos
+    assert (quien, codigo) == ("111", VIAJE["codigo"])
+    assert req.fin is not None and req.llegada.distancia_m == 30
+    # El seguimiento queda apuntando al recorrido que lo trajo.
+    assert req.trazado == "viaje-0001"
+
+
+async def test_la_vuelta_se_cierra_aunque_el_recorrido_no_suba(base, monkeypatch):
+    from app.services import camiones
+
+    avisos = []
+
+    async def seguimiento(settings, identidad, codigo, req):
+        avisos.append(codigo)
+
+    def s3_caido(*_):
+        raise RuntimeError("S3 no contesta")
+
+    monkeypatch.setattr(camiones, "seguimiento", seguimiento)
+    monkeypatch.setattr(almacenamiento, "subir", s3_caido)
+    r = await _sync(YO, _ruta("viaje-0001", metodo="automatico", viaje=VIAJE))
+
+    assert not r.trazados[0].ok
+    assert avisos == [VIAJE["codigo"]]
+
+
+async def test_un_seguimiento_que_falla_no_frena_el_recorrido(base, monkeypatch):
+    from app.services import camiones
+
+    async def falla(*_, **__):
+        raise HTTPException(status_code=404, detail="Ese viaje no existe.")
+
+    monkeypatch.setattr(camiones, "seguimiento", falla)
+    r = await _sync(YO, _ruta("viaje-0001", metodo="automatico", viaje=VIAJE))
+
+    assert r.trazados[0].ok
+    assert len(base.de("Trazados")) == 1
+
+
+async def test_un_recorrido_cualquiera_no_toca_el_seguimiento(base, monkeypatch):
+    from app.services import camiones
+
+    async def nunca(*_, **__):
+        raise AssertionError("no es una vuelta")
+
+    monkeypatch.setattr(camiones, "seguimiento", nunca)
+    r = await _sync(YO, _ruta())
+    assert r.trazados[0].ok

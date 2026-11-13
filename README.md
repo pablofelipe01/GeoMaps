@@ -107,7 +107,7 @@ de Android ve el `localhost` de la maquina, y un celular fisico por USB usa
 | **Medir** distancia y area sobre el mapa, y guardar el area | `ui/medicion.dart` |
 | **Compartir** recorridos, areas y puntos como KML, GPX o GeoJSON | `core/exportador.dart` |
 | Subir recorridos, areas, rutas y puntos a Airtable y S3 al volver la red | `state/sincronizador.dart` |
-| Camiones: escanear el QR, tomar una vuelta, ir por los vagones y a dejar el vacio, devolverla si fue un error (tomar y devolver necesitan senal) | `lib/camiones/` |
+| Camiones: escanear el QR y tomar una vuelta firmando solo con la clave (sin cedula). **Una vuelta a la vez**: hay que llegar a los vagones y volver al punto de salida para finalizarla, y hasta entonces no se toma otra. Cada paso -tomada, llegada, regreso, finalizada- queda en la tabla `Vueltas` (tomar y devolver necesitan senal; lo demas funciona sin ella) | `lib/camiones/`, `backend/app/services/viajes.py` |
 
 **Falta:**
 

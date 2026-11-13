@@ -51,6 +51,9 @@ from .config import Settings, get_settings
 from .schemas_camiones import (
     ConfirmarRequest,
     ConfirmarResponse,
+    MiViajeResponse,
+    SeguimientoRequest,
+    SeguimientoResponse,
     SoltarResponse,
     VueltasResponse,
 )
@@ -635,8 +638,9 @@ async def vueltas_pendientes(
 ) -> VueltasResponse:
     """Las vueltas por recoger de la planilla de SiriusFleet. Lo que abre el QR.
 
-    Trae tambien `conductor`: si la cuenta ya tiene cedula atada y si hay que
-    pedirle clave, para que el dialogo de confirmar pida solo lo que falta.
+    Trae tambien `conductor` -a nombre de quien quedan y si hay que pedirle
+    clave- y `viaje_abierto`: la vuelta que esta cuenta tomo y no finalizo.
+    Mientras tenga una no puede tomar otra.
     """
     auth.exigir_perfil(identidad, "camiones")
     return await camiones.pendientes(get_settings(), identidad)
@@ -669,6 +673,34 @@ async def soltar_vuelta(
     return SoltarResponse(
         vuelta=await camiones.soltar(get_settings(), identidad, str(vuelta_id))
     )
+
+
+@app.get("/v1/camiones/viaje", response_model=MiViajeResponse)
+async def mi_viaje(
+    identidad: auth.Identidad = Depends(auth.identidad_de_request),
+    _: None = Depends(auth.verificar_api_key),
+) -> MiViajeResponse:
+    """La vuelta sin finalizar de esta cuenta, segun el servidor."""
+    auth.exigir_perfil(identidad, "camiones")
+    return await camiones.mi_viaje(get_settings(), identidad)
+
+
+@app.post(
+    "/v1/camiones/viajes/{codigo}/seguimiento", response_model=SeguimientoResponse
+)
+async def seguimiento_viaje(
+    codigo: uuid.UUID,
+    req: SeguimientoRequest,
+    identidad: auth.Identidad = Depends(auth.identidad_de_request),
+    _: None = Depends(auth.verificar_api_key),
+) -> SeguimientoResponse:
+    """El telefono avisa por donde va la vuelta: llego, volvio, la finalizo.
+
+    Es el aviso en vivo, para cuando hay senal. El que no se pierde es el que
+    viaja con el recorrido grabado en `/v1/sync`: trae lo mismo y sube solo.
+    """
+    auth.exigir_perfil(identidad, "camiones")
+    return await camiones.seguimiento(get_settings(), identidad, str(codigo), req)
 
 
 # TODO: GET  /v1/proyectos         espejo del directorio, filtrado por dueno

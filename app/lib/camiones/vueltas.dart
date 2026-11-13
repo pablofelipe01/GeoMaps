@@ -30,6 +30,24 @@ class Sitio {
 
   /// `7 · 7`, como se escribe en la hoja: bloque y acopio.
   String get corto => '${bloque ?? '—'} · ${numero ?? '—'}';
+
+  static final _bloqueYParcela = RegExp(r'^B\.(\w+)-P\.(\w+)');
+
+  /// `Acopio 11A`, con la palabra: es lo que se lee de lejos.
+  String get acopio => 'Acopio ${numero ?? '—'}';
+
+  /// `Bloque 3 · Parcela 4`, con todas las letras. `B.3-P.4` escrito chico no
+  /// lo distingue de un vistazo quien no ve bien. Si el rotulo no trae la
+  /// parcela, queda el bloque solo.
+  String get lugar {
+    final m = _bloqueYParcela.firstMatch(codigo ?? '');
+    if (m != null) return 'Bloque ${m[1]} · Parcela ${m[2]}';
+    final b = (bloque ?? '').replaceFirst(RegExp(r'^B\.'), '');
+    return b.isEmpty ? '' : 'Bloque $b';
+  }
+
+  /// `Bloque 3 · Parcela 4 · Acopio 11A`: el sitio entero en un renglon.
+  String get largo => lugar.isEmpty ? acopio : '$lugar · $acopio';
 }
 
 /// Una vuelta pendiente por recoger: un renglon de la planilla de vagones con
@@ -137,39 +155,93 @@ bool esQrDeVueltas(String leido) {
   return ruta.endsWith('/despacho/pendientes');
 }
 
-/// Como esta parada la cuenta para tomar una vuelta. Lo manda el backend con
-/// la lista, para que el dialogo de confirmar pida solo lo que falta.
+/// A nombre de quien quedan las vueltas que tome esta cuenta. Lo manda el
+/// backend con la lista. La cedula ya no se le pide a nadie: la vuelta queda
+/// a nombre de la cuenta.
 class Conductor {
-  const Conductor({this.cedula, this.nombre, this.pideClave = true});
+  const Conductor({this.nombre, this.pideClave = true});
 
   factory Conductor.deJson(Map<String, dynamic> j) => Conductor(
-    cedula: j['cedula'] as String?,
     nombre: j['nombre'] as String?,
     pideClave: j['pide_clave'] as bool? ?? true,
   );
 
-  /// La cedula atada a la cuenta. Nula hasta que confirma la primera vuelta.
-  final String? cedula;
-
-  /// Como figura en el registro de conductores de SiriusFleet.
+  /// Como va a figurar en la planilla.
   final String? nombre;
 
   /// Las cuentas de Google no tienen clave: confirman con la sesion.
   final bool pideClave;
+}
 
-  bool get tieneCedula => cedula != null && cedula!.isNotEmpty;
+/// La vuelta que esta cuenta tomo y todavia no finaliza, segun el servidor.
+///
+/// Mientras exista no se puede tomar otra. Viene completa para que un
+/// telefono que no la tiene -se reinstalo la app, se cambio de telefono- la
+/// pueda continuar en vez de quedar trabado.
+class ViajeAbierto {
+  const ViajeAbierto({
+    required this.codigo,
+    required this.vueltaId,
+    this.nombre,
+    this.tomadaEn,
+    this.salida,
+    this.llegadaEn,
+    this.regresoEn,
+    this.vuelta,
+  });
 
-  /// `***334`: alcanza para reconocerla sin dejarla entera a la vista de
-  /// quien mire la pantalla por encima del hombro.
-  String get cedulaOculta {
-    final c = cedula ?? '';
-    return c.length <= 3 ? c : '***${c.substring(c.length - 3)}';
+  factory ViajeAbierto.deJson(Map<String, dynamic> j) {
+    DateTime? fecha(String llave) =>
+        j[llave] == null ? null : DateTime.tryParse(j[llave] as String);
+    final salida = j['salida'] as Map<String, dynamic>?;
+    return ViajeAbierto(
+      codigo: j['codigo'] as String,
+      vueltaId: j['vuelta_id'] as String,
+      nombre: j['nombre'] as String?,
+      tomadaEn: fecha('tomada_en'),
+      salida: salida == null
+          ? null
+          : LatLng(
+              (salida['lat'] as num).toDouble(),
+              (salida['lon'] as num).toDouble(),
+            ),
+      llegadaEn: fecha('llegada_en'),
+      regresoEn: fecha('regreso_en'),
+      vuelta: j['vuelta'] == null
+          ? null
+          : Vuelta.deJson(j['vuelta'] as Map<String, dynamic>),
+    );
   }
+
+  /// El codigo del viaje en el seguimiento.
+  final String codigo;
+  final String vueltaId;
+
+  /// `Vuelta #23 · B.3-P.4 · 11A`.
+  final String? nombre;
+  final DateTime? tomadaEn;
+
+  /// Donde estaba el camion al tomarla: a donde tiene que volver.
+  final LatLng? salida;
+  final DateTime? llegadaEn;
+  final DateTime? regresoEn;
+
+  /// Nula si el renglon ya no esta en la planilla.
+  final Vuelta? vuelta;
+
+  /// `Vuelta #23`, o el nombre entero si no se pudo leer el renglon.
+  String get titulo =>
+      vuelta == null ? (nombre ?? 'Una vuelta') : 'Vuelta #${vuelta!.consecutivo}';
 }
 
 /// La respuesta de la lista: las vueltas y quien las esta mirando.
 class ListaVueltas {
-  const ListaVueltas({required this.vueltas, this.conductor});
+  const ListaVueltas({
+    required this.vueltas,
+    this.conductor,
+    this.viajeAbierto,
+    this.control = false,
+  });
 
   factory ListaVueltas.deJson(Map<String, dynamic> j) => ListaVueltas(
     vueltas: [
@@ -179,13 +251,23 @@ class ListaVueltas {
     conductor: j['conductor'] == null
         ? null
         : Conductor.deJson(j['conductor'] as Map<String, dynamic>),
+    viajeAbierto: j['viaje_abierto'] == null
+        ? null
+        : ViajeAbierto.deJson(j['viaje_abierto'] as Map<String, dynamic>),
+    control: j['control'] as bool? ?? false,
   );
 
   final List<Vuelta> vueltas;
 
-  /// Nulo si el backend no pudo leer la cuenta (o es uno viejo, que no lo
-  /// mandaba): el dialogo pide todo, como la primera vez.
+  /// Nulo si el backend no pudo leer la cuenta: la lista sale igual.
   final Conductor? conductor;
+
+  /// La vuelta sin finalizar de esta cuenta, si tiene una.
+  final ViajeAbierto? viajeAbierto;
+
+  /// Si el servidor esta llevando el seguimiento de las vueltas. En falso
+  /// -un servidor anterior, o sin la tabla- [viajeAbierto] no dice nada.
+  final bool control;
 }
 
 /// Las vueltas pendientes, recien pedidas. Se piden al abrir la lista y con
@@ -194,3 +276,23 @@ class ListaVueltas {
 final vueltasProvider = FutureProvider.autoDispose<ListaVueltas>((ref) async {
   return ListaVueltas.deJson(await ref.watch(apiProvider).vueltasPendientes());
 });
+
+/// Lo que el servidor dice de la vuelta abierta de esta cuenta: si lleva el
+/// control y cual es. Nulo si no se pudo preguntar -sin senal, o un servidor
+/// anterior-, que no es lo mismo que "no tiene ninguna".
+final miViajeProvider =
+    FutureProvider.autoDispose<({bool control, ViajeAbierto? viaje})?>((
+      ref,
+    ) async {
+      try {
+        final j = await ref.watch(apiProvider).miViaje();
+        return (
+          control: j['control'] as bool? ?? false,
+          viaje: j['viaje'] == null
+              ? null
+              : ViajeAbierto.deJson(j['viaje'] as Map<String, dynamic>),
+        );
+      } catch (_) {
+        return null;
+      }
+    });

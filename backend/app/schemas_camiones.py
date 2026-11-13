@@ -57,44 +57,135 @@ class Vuelta(BaseModel):
         )
 
 
-class Conductor(BaseModel):
-    """Como esta parada la cuenta para tomar una vuelta.
+class Posicion(BaseModel):
+    """Donde estaba el telefono, y que tan bueno era el GPS en ese momento."""
 
-    Con esto la app arma el dialogo de confirmar sin adivinar: pide la cedula
-    solo si todavia no hay una atada, y la clave solo si la cuenta tiene una.
+    lat: float = Field(ge=-90, le=90)
+    lon: float = Field(ge=-180, le=180)
+    precision_m: float | None = Field(default=None, ge=0)
+
+
+class Movimiento(BaseModel):
+    """Un paso del viaje: cuando paso y donde estaba el camion.
+
+    Los arma el telefono, que es el que tiene el GPS y el que esta en el lote
+    sin senal: el backend los recibe cuando la hay, a veces horas despues, y por
+    eso cada uno trae su propia hora en vez de usar la de llegada.
     """
 
-    # La cedula atada a la cuenta, o nulo si todavia no confirmo ninguna vuelta.
+    en: datetime
+    lat: float | None = Field(default=None, ge=-90, le=90)
+    lon: float | None = Field(default=None, ge=-180, le=180)
+    precision_m: float | None = Field(default=None, ge=0)
+    # A cuanto quedo de donde tenia que estar: del acopio al llegar, del punto
+    # de salida al volver y al finalizar.
+    distancia_m: float | None = Field(default=None, ge=0)
+    # Falso si lo marco la persona y no el GPS: el acopio no tenia coordenada.
+    verificado: bool = True
+
+
+class Conductor(BaseModel):
+    """A nombre de quien quedan las vueltas que tome esta cuenta.
+
+    `cedula` sigue en el modelo para los telefonos con una app anterior, que la
+    leen; ya no se llena: la cedula no se le pide a nadie.
+    """
+
     cedula: str | None = None
-    # Como figura en el registro de conductores de SiriusFleet. Nulo si no hay
-    # cedula atada, o si la atada ya no esta entre los conductores activos.
+    # Como figura en la planilla: el conductor de SiriusFleet si la cuenta esta
+    # enlazada a uno, y si no el nombre de la cuenta.
     nombre: str | None = None
     # Las cuentas de Google no tienen clave: confirman con la sesion.
     pide_clave: bool = True
 
 
+class ViajeAbierto(BaseModel):
+    """La vuelta que esta cuenta tomo y todavia no finaliza.
+
+    Mientras exista no puede tomar otra. Viaja completa -con la vuelta y donde
+    empezo- para que un telefono que no la tiene (se reinstalo la app, se
+    cambio de telefono) la pueda continuar en vez de quedar trabado.
+    """
+
+    codigo: str
+    vuelta_id: str
+    nombre: str | None = None
+    # `en_camino` o `en_punto`.
+    estado: str
+    tomada_en: datetime | None = None
+    salida: Posicion | None = None
+    llegada_en: datetime | None = None
+    regreso_en: datetime | None = None
+    # Nula si el renglon ya no esta en la planilla de SiriusFleet.
+    vuelta: Vuelta | None = None
+
+
 class VueltasResponse(BaseModel):
     vueltas: list[Vuelta]
-    # Nulo si no se pudo leer la cuenta: la lista sale igual, y el dialogo
-    # pide todo como la primera vez.
+    # Nulo si no se pudo leer la cuenta: la lista sale igual.
     conductor: Conductor | None = None
+    # La vuelta sin finalizar de esta cuenta, si tiene una.
+    viaje_abierto: ViajeAbierto | None = None
+    # Si el backend esta llevando el seguimiento de las vueltas. En falso, la
+    # tabla `Vueltas` no existe en Airtable y `viaje_abierto` no dice nada.
+    control: bool = False
 
 
 class ConfirmarRequest(BaseModel):
-    """La firma del conductor.
+    """La firma del conductor: su clave, si la cuenta tiene una.
 
-    `cedula` hace falta la primera vez; despues queda atada a la cuenta y se
-    puede omitir. `clave` hace falta solo en las cuentas que tienen una.
+    `cedula` ya no se usa. Se acepta y se ignora para no rechazar a un telefono
+    con una app anterior que todavia la manda.
     """
 
     cedula: str | None = Field(default=None, max_length=30)
     clave: str | None = Field(default=None, max_length=200)
+    # Donde esta el camion al tomar la vuelta: de ahi sale y ahi tiene que
+    # volver para finalizarla. Nulo si el GPS todavia no dio posicion.
+    salida: Posicion | None = None
 
 
 class ConfirmarResponse(BaseModel):
     vuelta: Vuelta
     conductor: str
+    # El codigo del viaje en el seguimiento. Nulo si no se esta llevando.
+    viaje: str | None = None
 
 
 class SoltarResponse(BaseModel):
     vuelta: Vuelta
+
+
+class SeguimientoRequest(BaseModel):
+    """Lo que el telefono sabe del viaje hasta ahora.
+
+    Siempre manda todo lo que tiene, no solo lo nuevo: asi reintentar no
+    depende de acordarse que llego y que no, y el orden en que lleguen dos
+    avisos no importa.
+    """
+
+    salida: Movimiento | None = None
+    llegada: Movimiento | None = None
+    regreso: Movimiento | None = None
+    fin: Movimiento | None = None
+    recorrido_m: float | None = Field(default=None, ge=0)
+    # El `Codigo trazado` del recorrido grabado, para encontrar el GPS completo.
+    trazado: str | None = Field(default=None, max_length=64)
+
+
+class ViajeSync(SeguimientoRequest):
+    """El mismo seguimiento, viajando con el recorrido grabado en `/v1/sync`."""
+
+    codigo: str = Field(min_length=8, max_length=64)
+
+
+class SeguimientoResponse(BaseModel):
+    # `en_camino`, `en_punto`, `finalizada` o `devuelta`.
+    estado: str
+    abierto: bool
+
+
+class MiViajeResponse(BaseModel):
+    # Ver `VueltasResponse.control`.
+    control: bool
+    viaje: ViajeAbierto | None = None

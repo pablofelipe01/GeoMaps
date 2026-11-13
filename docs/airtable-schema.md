@@ -23,6 +23,7 @@ USUARIO -> PROYECTO -> MAPA (capa base offline)
                     -> TRAZADO (ruta / poligono)  -> ARCHIVO (KML, GPX, PDF)
                     -> WAYPOINT                   -> FOTO
         -> SINCRONIZACION (log de cada subida)
+        -> VUELTA (camiones: tomada, llegada, regreso, finalizada)
 ```
 
 ## Tablas
@@ -37,6 +38,7 @@ USUARIO -> PROYECTO -> MAPA (capa base offline)
 | `Waypoints` | Puntos marcados |
 | `Archivos` | Todo lo que la app genera: KML, GPX, PDF, fotos |
 | `Sincronizaciones` | Log de cada subida, para poder explicar un dato perdido |
+| `Vueltas` | Seguimiento de las vueltas de camiones: quien tomo cada una, cuando llego a los vagones, cuando volvio y cuando la finalizo |
 
 ---
 
@@ -57,7 +59,7 @@ USUARIO -> PROYECTO -> MAPA (capa base offline)
 | `Rol` | Single select | `Usuario` / `Soporte` / `Admin`. Toda cuenta nueva nace `Usuario` |
 | `Estado` | Single select | `Activa` / `Suspendida` / `Baja pedida` |
 | `Perfiles` | Multiple select | `Plantacion` / `Camiones`. Que herramientas ve en la app. **Vacio = Plantacion**, asi las cuentas viejas no pierden nada. Se asigna a mano; llega al telefono la proxima vez que abre la app con senal (`POST /v1/sesion/renovar`), o al tocar "Actualizar mi cuenta". Ya no hace falta cerrar sesion |
-| `Cedula` | Single line text | Solo digitos. La del conductor en SiriusFleet (`operadores.documento`). **Se llena sola** la primera vez que confirma una vuelta y desde ahi queda atada: esa cuenta solo confirma con esa cedula y ninguna otra cuenta puede usarla. Para cambiarla se borra a mano |
+| `Cedula` | Single line text | Solo digitos. **Opcional, y la carga un administrador**: a la persona ya no se le pide. Si esta, enlaza la cuenta con el conductor de SiriusFleet que tenga ese documento (`operadores.documento`) y las vueltas que tome quedan con su nombre en la columna Conductor de la planilla |
 | `Espacio usado (MB)` | Number (1 decimal) | Suma de lo que ocupa en S3. Contra `CUOTA_MB_POR_USUARIO` |
 | `Registrado en` | Date with time | |
 | `Ultimo acceso` | Date with time | |
@@ -94,32 +96,40 @@ formulario, porque el nombre hay que preguntarlo — pero `POST /v1/registro`
 devuelve la sesion abierta, no un "ya te podes loguear": mandar a alguien a un
 segundo formulario desperdicia el unico rato con senal que va a tener ese dia.
 
-**Camiones: las vueltas viven en SiriusFleet, no aca.** La lista de vueltas
-pendientes y quien salio por cada una estan en la planilla de vagones de
-SiriusFleet (Supabase). GeoMaps solo la lee y, al confirmar, anota conductor y
-hora de salida alla (`backend/app/services/supabase.py`). Lo unico que queda en
-esta base es la `Cedula` atada a la cuenta y el viaje grabado, que sube como un
-`Trazado` con `Metodo = Automatico` y la vuelta en las propiedades del GeoJSON.
+**Camiones: la planilla vive en SiriusFleet, el seguimiento aca.** La lista
+de vueltas pendientes esta en la planilla de vagones de SiriusFleet
+(Supabase). GeoMaps la lee y, al tomar una, anota alla la hora de salida
+(`backend/app/services/supabase.py`). Lo que pasa despues -si llego a los
+vagones, si volvio, cuando la finalizo- queda en la tabla [`Vueltas`](#vueltas)
+de esta base, y el recorrido del GPS sube como un `Trazado` con `Metodo =
+Automatico`.
 
-**Que hace falta para que un conductor tome vueltas.** Tres cosas, y las tres
-se arreglan sin tocar codigo:
+**Que hace falta para que un conductor tome vueltas.** Una sola cosa: que la
+cuenta tenga `Camiones` en `Perfiles`. Sin eso la app ni muestra el modulo y
+el backend responde 403.
 
-1. La cuenta tiene `Camiones` en `Perfiles`. Sin eso la app ni muestra el
-   modulo y el backend responde 403.
-2. Su cedula esta en `operadores.documento` de SiriusFleet, con el conductor
-   activo. Es lo que queda anotado en la planilla; si no esta, la app lo dice
-   con todas las letras ("pedile a despacho que te agregue").
-3. La primera vuelta que toma le pide la cedula, y queda en `Cedula`. De ahi
-   en adelante no se vuelve a pedir.
+**La cedula ya no se pide.** La vuelta se firma con la clave de GeoMaps, en
+cada vuelta, a las cuentas que tienen una (`Proveedor = Correo`). Las de
+Google no tienen clave y confirman con la sesion. La vuelta queda a nombre de
+**la cuenta**, y en la planilla de SiriusFleet se ve asi:
 
-La clave se pide en cada vuelta a las cuentas que tienen una (`Proveedor =
-Correo`). **Las de Google no tienen clave y confirman con la sesion**: antes
-no podian confirmar nada, y como la unica cuenta con el perfil era de Google,
-la lista se veia y ninguna vuelta se dejaba tomar.
+1. Si la cuenta tiene `Cedula` cargada, o se llama exactamente igual que un
+   conductor activo de SiriusFleet, queda ese conductor en la columna
+   Conductor.
+2. Si no, la columna Conductor queda en blanco y el nombre de la cuenta va en
+   Observaciones (`GeoMaps: Fulano`), sin borrar lo que despacho hubiera
+   escrito ahi.
 
-Una vuelta tomada por error se devuelve desde la app ("No la voy a recoger"):
-el backend le borra conductor y hora de salida en la planilla, solo si la
-habia tomado ese mismo conductor, y vuelve a la lista.
+**Una vuelta a la vez.** Mientras una cuenta tenga una fila de `Vueltas` en
+`En camino` o `En el punto`, el backend no le deja tomar otra (423). La cierra
+finalizandola -lo que exige haber llegado a los vagones y haber vuelto al punto
+de salida- o devolviendola antes de llegar ("No la voy a recoger"): ahi el
+backend le borra la hora de salida en la planilla y vuelve a la lista.
+
+**Para destrabar a un conductor** -el acopio tenia mal la coordenada, se le
+rompio el telefono a mitad de camino- alguien de coordinacion cambia el
+`Estado` de su fila en `Vueltas` a `Finalizada` o `Devuelta`. Con eso ya puede
+tomar otra, y la app le ofrece cerrar el viaje que tenia abierto.
 
 **`Perfiles` no es `Rol`.** El rol dice quien puede ver datos ajenos; el
 perfil dice que hace la persona en campo y por lo tanto que modulos ve. Viaja en
@@ -296,6 +306,51 @@ borrar el proyecto tiene que llevarse sus archivos.
 | `Detalle` | Long text | Que fallo y por que |
 
 Existe para poder responder *el trazado del martes no aparece* sin adivinar.
+
+### `Vueltas`
+
+El seguimiento de las vueltas de camiones. **Una fila es una vuelta tomada por
+una cuenta**: si la devuelve y la toma otro, son dos filas.
+
+Se crea con `python backend/scripts/crear_tabla_vueltas.py --aplicar` (sin
+`--aplicar` solo dice que haria). **Si la tabla no existe el backend sigue
+dejando tomar vueltas, pero sin control**: no impide tomar una segunda ni
+guarda los pasos. La app lo sabe por `control` en `GET /v1/camiones/vueltas`.
+
+| Campo | Tipo | Nota |
+|---|---|---|
+| `Codigo viaje` | Single line text | UUID que genera el backend al tomar la vuelta. Campo primario |
+| `Nombre` | Single line text | `Vuelta #23 · B.3-P.4 · 11A`: se reconoce sin abrir nada |
+| `Estado` | Single select | `En camino` / `En el punto` / `Finalizada` / `Devuelta`. Los dos primeros son "abierta": la cuenta no puede tomar otra. **Se puede cambiar a mano** para destrabar a alguien |
+| `Conductor` | Single line text | Como quedo en la planilla: el conductor de SiriusFleet si la cuenta esta enlazada, y si no el nombre de la cuenta |
+| `Jornada` | Date | La de la planilla |
+| `Consecutivo` | Number (entero) | El "No." de la planilla |
+| `Acopio` | Single line text | Donde estaban los vagones: `B.3-P.4 · 11A` |
+| `Tomada en` | Date with time | Cuando la tomo |
+| `Llegada en` | Date with time | Cuando el telefono entro a 100 m del acopio |
+| `Regreso en` | Date with time | Cuando, ya habiendo llegado, volvio a 150 m del punto de salida |
+| `Finalizada en` | Date with time | Cuando la finalizo |
+| `Devuelta en` | Date with time | Cuando la devolvio a la lista, si la devolvio |
+| `Distancia al punto (m)` | Number (entero) | A cuanto del acopio estaba al contarse la llegada |
+| `Distancia a la salida (m)` | Number (entero) | A cuanto del punto de salida estaba al finalizar |
+| `Recorrido (m)` | Number (entero) | Lo que anduvo, segun el GPS |
+| `Salida lat` / `Salida lon` | Number (precision 6) | Donde estaba el camion al tomarla: el punto al que tiene que volver |
+| `Avisos` | Long text | Lo que conviene mirar: por ejemplo, una llegada marcada a mano porque el acopio no tenia coordenada |
+| `Codigo trazado` | Single line text | El `Codigo trazado` del recorrido en `Trazados`: ahi esta el GPS completo |
+| `Vuelta ID` | Single line text | El `id` del renglon en `viajes_vagones` de SiriusFleet |
+| `Usuario` | Link -> Usuarios | Quien la tomo |
+| `Auth UID` | Single line text | El mismo dato como texto, para filtrar sin resolver el enlace |
+
+**Las horas las pone el telefono, no el servidor.** El lote no tiene senal: la
+llegada se detecta ahi y sube despues, a veces horas despues. Cada paso trae
+su propia hora y su posicion, y viaja dos veces: en un aviso directo cuando hay
+senal (`POST /v1/camiones/viajes/{codigo}/seguimiento`) y adentro del recorrido
+cuando sube (`POST /v1/sync`, campo `viaje`), que es el que no se pierde.
+
+**Las reglas de distancia las aplica el telefono** (`app/lib/camiones/
+seguimiento.dart`), que es el que tiene el GPS. El backend guarda lo que le
+reportan y cuida el orden: no acepta un "finalizada" de una vuelta que nunca
+llego a los vagones.
 
 ---
 

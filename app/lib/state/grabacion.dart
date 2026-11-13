@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:geolocator/geolocator.dart';
 
+import '../camiones/seguimiento.dart';
 import '../core/geo.dart';
 import '../core/ubicacion.dart';
 import '../data/trazados_repository.dart';
@@ -57,6 +58,10 @@ class EstadoGrabacion {
   final bool abiertaSinGrabar;
 
   bool get grabando => codigo != null && !abiertaSinGrabar;
+
+  /// Si lo que se graba es la vuelta de un camion. Una vuelta no se corta
+  /// como un recorrido cualquiera: se finaliza con sus reglas.
+  bool get esVuelta => codigo != null && propiedades['vuelta_id'] != null;
 }
 
 /// Graba un recorrido con el GPS: el viaje de un camion, y mas adelante el
@@ -68,7 +73,7 @@ class EstadoGrabacion {
 /// final: si Android mata la app en la mitad del viaje, se pierde a lo sumo el
 /// ultimo tramo, y al volver la grabacion se puede retomar.
 class Grabador extends StateNotifier<EstadoGrabacion> {
-  Grabador(this._trazados, this._usuario, this._alCerrar)
+  Grabador(this._trazados, this._usuario, this._alCerrar, {this.vigia})
     : super(const EstadoGrabacion()) {
     _buscarAbierta();
   }
@@ -78,6 +83,12 @@ class Grabador extends StateNotifier<EstadoGrabacion> {
 
   /// Que hacer con un trazado recien cerrado: subirlo.
   final void Function() _alCerrar;
+
+  /// Quien mira cada posicion mientras se graba y le anota cosas al
+  /// recorrido: si el camion ya llego a los vagones, si ya volvio. Va aca y
+  /// no en una pantalla porque el grabador es lo unico que sigue vivo con el
+  /// telefono en el bolsillo.
+  final VigiaDeVueltas? vigia;
 
   /// Un fix con mas error que esto no entra en la linea. Bajo palma cerrada el
   /// GPS da saltos de 60 m, y un viaje con esos picos mide kilometros de mas.
@@ -138,6 +149,8 @@ class Grabador extends StateNotifier<EstadoGrabacion> {
   }) async {
     final usuario = _usuario;
     if (usuario == null) return;
+    // Una vuelta en curso no se corta por empezar otra cosa: se finaliza.
+    if (state.esVuelta) return;
     if (state.codigo != null) await terminar();
 
     final todas = <String, Object?>{
@@ -182,6 +195,26 @@ class Grabador extends StateNotifier<EstadoGrabacion> {
       linea: _puntos,
     );
     _escuchar();
+    // Lo que se grabo antes de que la app se cerrara tambien cuenta.
+    final cambios = vigia?.alRetomar(_puntos, state.propiedades);
+    if (cambios != null) unawaited(anotar(cambios));
+  }
+
+  /// Suma [cambios] a lo que el recorrido lleva guardado, sin cerrarlo, y lo
+  /// deja en la base del telefono: lo que se anota a mitad de camino tiene
+  /// que seguir ahi si la app se cierra.
+  Future<void> anotar(Map<String, Object?> cambios) async {
+    final codigo = state.codigo;
+    if (codigo == null || cambios.isEmpty) return;
+    state = _con(propiedades: {...state.propiedades, ...cambios});
+    // Se guardan todas y no solo las nuevas: este guardado y el de cada
+    // tantos puntos pueden cruzarse, y el que llegue ultimo no puede pisar
+    // con una copia vieja lo que el otro acaba de anotar.
+    await _trazados.guardarAvance(
+      codigo,
+      List.of(_puntos),
+      propiedades: state.propiedades,
+    );
   }
 
   /// Cierra la grabacion, calcula sus numeros y la manda a subir.
@@ -201,7 +234,7 @@ class Grabador extends StateNotifier<EstadoGrabacion> {
       codigo,
       List.of(_puntos),
       precisionMediaM: precision,
-      propiedades: propiedades,
+      propiedades: {...state.propiedades, ...propiedades},
     );
     _puntos.clear();
     _precisiones.clear();
@@ -240,6 +273,9 @@ class Grabador extends StateNotifier<EstadoGrabacion> {
     // La ultima conocida que se repite al reabrir el flujo no es del viaje.
     if (Ubicacion.esDeCache(p)) return;
 
+    final cambios = vigia?.alFix(p, state.propiedades);
+    if (cambios != null) unawaited(anotar(cambios));
+
     if (p.accuracy > precisionMaximaM) {
       state = _con(precision: p.accuracy);
       return;
@@ -262,23 +298,34 @@ class Grabador extends StateNotifier<EstadoGrabacion> {
 
     if (++_sinGuardar >= guardarCada) {
       _sinGuardar = 0;
-      unawaited(_trazados.guardarAvance(state.codigo!, List.of(_puntos)));
+      unawaited(
+        _trazados.guardarAvance(
+          state.codigo!,
+          List.of(_puntos),
+          propiedades: state.propiedades,
+        ),
+      );
     }
   }
 
-  EstadoGrabacion _con({double? precision, int? puntos, double? metros}) =>
-      EstadoGrabacion(
-        codigo: state.codigo,
-        nombre: state.nombre,
-        puntos: puntos ?? state.puntos,
-        metros: metros ?? state.metros,
-        precisionUltimaM: precision ?? state.precisionUltimaM,
-        inicio: state.inicio,
-        destino: state.destino,
-        destinoNombre: state.destinoNombre,
-        propiedades: state.propiedades,
-        linea: _puntos,
-      );
+  EstadoGrabacion _con({
+    double? precision,
+    int? puntos,
+    double? metros,
+    Map<String, Object?>? propiedades,
+  }) => EstadoGrabacion(
+    codigo: state.codigo,
+    nombre: state.nombre,
+    puntos: puntos ?? state.puntos,
+    metros: metros ?? state.metros,
+    precisionUltimaM: precision ?? state.precisionUltimaM,
+    inicio: state.inicio,
+    destino: state.destino,
+    destinoNombre: state.destinoNombre,
+    propiedades: propiedades ?? state.propiedades,
+    linea: _puntos,
+    abiertaSinGrabar: state.abiertaSinGrabar,
+  );
 
   @override
   void dispose() {
@@ -286,7 +333,13 @@ class Grabador extends StateNotifier<EstadoGrabacion> {
     // grabacion queda abierta, para retomarla o cerrarla al volver.
     final codigo = state.codigo;
     if (codigo != null && _gps != null) {
-      unawaited(_trazados.guardarAvance(codigo, List.of(_puntos)));
+      unawaited(
+        _trazados.guardarAvance(
+          codigo,
+          List.of(_puntos),
+          propiedades: state.propiedades,
+        ),
+      );
     }
     _gps?.cancel();
     if (_gps != null) Gps.instancia.grabarEnFondo(false);
@@ -301,5 +354,11 @@ final grabadorProvider = StateNotifierProvider<Grabador, EstadoGrabacion>((
     ref.watch(trazadosRepositoryProvider),
     ref.watch(sesionProvider.select((e) => e.sesion?.codigoUsuario)),
     () => ref.read(sincronizadorProvider.notifier).sincronizar(),
+    // Cuando el camion llega o vuelve, se avisa al backend por si hay senal.
+    // Si no la hay no pasa nada: sube despues, con el recorrido.
+    vigia: VigiaDeVueltas(
+      avisar: (propiedades) =>
+          unawaited(avisarSeguimiento(ref.read(apiProvider), propiedades)),
+    ),
   );
 });
