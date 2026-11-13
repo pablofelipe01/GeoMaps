@@ -152,19 +152,77 @@ class ApiClient {
     return jsonDecode(utf8.decode(r.bodyBytes)) as Map<String, dynamic>;
   }
 
-  /// El conductor toma una vuelta, firmando con su cedula y su clave.
+  /// El conductor toma una vuelta.
+  ///
+  /// [clave] solo en las cuentas que tienen una: las de Google confirman con
+  /// la sesion. Lo que no se manda no viaja como texto vacio, viaja ausente.
+  /// [salida] es donde esta el camion al tomarla (`lat`, `lon`,
+  /// `precision_m`): de ahi sale y ahi tiene que volver.
   Future<Map<String, dynamic>> confirmarVuelta(
     String vueltaId, {
-    required String cedula,
-    required String clave,
+    String? clave,
+    Map<String, Object?>? salida,
   }) async {
     final r = await _http
         .post(
           _uri('/v1/camiones/vueltas/$vueltaId/confirmar'),
           headers: _cabeceras(),
-          body: jsonEncode({'cedula': cedula, 'clave': clave}),
+          body: jsonEncode({
+            if (clave != null && clave.isNotEmpty) 'clave': clave,
+            'salida': ?salida,
+          }),
         )
         .timeout(const Duration(seconds: 30));
+    if (r.statusCode != 200) throw _fallo(r);
+    return jsonDecode(utf8.decode(r.bodyBytes)) as Map<String, dynamic>;
+  }
+
+  /// La vuelta sin finalizar de esta cuenta, segun el servidor: `control`
+  /// dice si esta llevando el seguimiento, y `viaje` cual tiene abierta.
+  Future<Map<String, dynamic>> miViaje() async {
+    final r = await _http
+        .get(_uri('/v1/camiones/viaje'), headers: _cabeceras())
+        .timeout(const Duration(seconds: 20));
+    if (r.statusCode != 200) throw _fallo(r);
+    return jsonDecode(utf8.decode(r.bodyBytes)) as Map<String, dynamic>;
+  }
+
+  /// Avisa por donde va la vuelta: llego a los vagones, volvio, la finalizo.
+  /// Manda todo lo que se sabe del viaje, asi que repetirlo no hace dano.
+  Future<Map<String, dynamic>> seguimientoViaje(
+    String codigo,
+    Map<String, Object?> cuerpo,
+  ) async {
+    final r = await _http
+        .post(
+          _uri('/v1/camiones/viajes/$codigo/seguimiento'),
+          headers: _cabeceras(),
+          body: jsonEncode(cuerpo),
+        )
+        // Corto a proposito: se llama al finalizar, con el conductor
+        // esperando. Lo que no llegue sube despues con el recorrido.
+        .timeout(const Duration(seconds: 10));
+    if (r.statusCode != 200) throw _fallo(r);
+    return jsonDecode(utf8.decode(r.bodyBytes)) as Map<String, dynamic>;
+  }
+
+  /// Devuelve a la lista una vuelta que este conductor tomo y no va a hacer.
+  Future<void> soltarVuelta(String vueltaId) async {
+    final r = await _http
+        .post(
+          _uri('/v1/camiones/vueltas/$vueltaId/soltar'),
+          headers: _cabeceras(),
+        )
+        .timeout(const Duration(seconds: 30));
+    if (r.statusCode != 200) throw _fallo(r);
+  }
+
+  /// Cambia el JWT por uno nuevo, con los perfiles que la cuenta tenga hoy.
+  /// Devuelve el mismo cuerpo que las puertas de entrada.
+  Future<Map<String, dynamic>> renovarSesion() async {
+    final r = await _http
+        .post(_uri('/v1/sesion/renovar'), headers: _cabeceras())
+        .timeout(const Duration(seconds: 20));
     if (r.statusCode != 200) throw _fallo(r);
     return jsonDecode(utf8.decode(r.bodyBytes)) as Map<String, dynamic>;
   }
@@ -187,9 +245,19 @@ class ApiError implements Exception {
     String mensaje;
     try {
       final cuerpo = jsonDecode(utf8.decode(r.bodyBytes));
-      mensaje = (cuerpo is Map && cuerpo['detail'] != null)
-          ? cuerpo['detail'].toString()
-          : 'El servidor respondio ${r.statusCode}.';
+      final detalle = cuerpo is Map ? cuerpo['detail'] : null;
+      if (detalle is String) {
+        mensaje = detalle;
+      } else if (detalle is List) {
+        // La validacion de FastAPI responde una lista de campos, escrita para
+        // un programador. Pasa cuando la app y el servidor no son de la misma
+        // version: mostrarla cruda en un lote no le sirve a nadie.
+        mensaje =
+            'El servidor no acepto los datos (${r.statusCode}). Puede que la '
+            'app o el servidor esten desactualizados: avisale a soporte.';
+      } else {
+        mensaje = 'El servidor respondio ${r.statusCode}.';
+      }
     } catch (_) {
       mensaje = 'El servidor respondio ${r.statusCode}.';
     }

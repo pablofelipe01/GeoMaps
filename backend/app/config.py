@@ -27,6 +27,9 @@ class Settings(BaseSettings):
     airtable_tabla_waypoints: str = "Waypoints"
     airtable_tabla_archivos: str = "Archivos"
     airtable_tabla_sincronizaciones: str = "Sincronizaciones"
+    # El seguimiento de las vueltas de camiones. Si la tabla no existe, las
+    # vueltas se toman igual pero sin control: ver services/viajes.py.
+    airtable_tabla_vueltas: str = "Vueltas"
 
     # --- Identidad: Google + Airtable ------------------------------------
     # Registro abierto con cuenta de Google. No hay proveedor de identidad de

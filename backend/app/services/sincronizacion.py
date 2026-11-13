@@ -36,13 +36,16 @@ from fastapi import HTTPException
 from ..config import Settings
 from ..schemas_sync import (
     METODOS_CAPTURA,
+    MOTIVOS_RUTA,
+    SIMBOLOS_WAYPOINT,
     TIPOS_TRAZADO,
     ResultadoItem,
     SyncRequest,
     SyncResponse,
     TrazadoSync,
+    WaypointSync,
 )
-from . import airtable, almacenamiento, geometria
+from . import airtable, almacenamiento, camiones, geometria
 from .auth import Identidad, formula_del_duenno
 
 PROYECTO_LOCAL = "local"
@@ -76,6 +79,7 @@ async def sincronizar(
     proyectos: dict[str, tuple[str, str]] = {}
     resultados: list[ResultadoItem] = []
     for t in req.trazados:
+        await _cerrar_vuelta(settings, identidad, t)
         try:
             if t.proyecto_codigo not in proyectos:
                 proyectos[t.proyecto_codigo] = await _proyecto(
@@ -102,8 +106,36 @@ async def sincronizar(
                 )
             )
 
-    await _anotar(settings, usuario["id"], inicio, resultados)
-    return SyncResponse(trazados=resultados)
+    # Los puntos van despues de los trazados a proposito: un punto marcado
+    # durante un recorrido se enlaza a su fila, y para eso tiene que existir.
+    puntos: list[ResultadoItem] = []
+    for w in req.waypoints:
+        try:
+            if w.proyecto_codigo not in proyectos:
+                proyectos[w.proyecto_codigo] = await _proyecto(
+                    settings, identidad, usuario["id"], w.proyecto_codigo
+                )
+            _, proyecto_id = proyectos[w.proyecto_codigo]
+            await _waypoint(settings, w, proyecto_id, usuario["id"])
+            puntos.append(ResultadoItem(codigo=w.codigo, ok=True))
+        except RechazoItem as exc:
+            puntos.append(ResultadoItem(codigo=w.codigo, ok=False, error=str(exc)))
+        except HTTPException as exc:
+            puntos.append(
+                ResultadoItem(codigo=w.codigo, ok=False, error=str(exc.detail))
+            )
+        except Exception as exc:  # noqa: BLE001 -- red: reintentable.
+            puntos.append(
+                ResultadoItem(
+                    codigo=w.codigo,
+                    ok=False,
+                    error=f"No se pudo guardar el punto ({type(exc).__name__}). "
+                    "Se reintenta en la proxima sincronizacion.",
+                )
+            )
+
+    await _anotar(settings, usuario["id"], inicio, resultados + puntos)
+    return SyncResponse(trazados=resultados, waypoints=puntos)
 
 
 async def _proyecto(
@@ -201,8 +233,108 @@ async def _trazado(
     }
     campos.update({k: v for k, v in opcionales.items() if v is not None})
 
-    await airtable.guardar(settings, tabla, campos, existente["id"] if existente else None)
+    record_id = existente["id"] if existente else None
+    calificacion = _calificacion(t)
+    if not calificacion:
+        await airtable.guardar(settings, tabla, campos, record_id)
+        return llave
+
+    try:
+        await airtable.guardar(settings, tabla, {**campos, **calificacion}, record_id)
+    except HTTPException as exc:
+        # Los campos de la calificacion se agregaron despues que la tabla. Si
+        # en esta base todavia no existen, el recorrido sube igual sin ellos:
+        # la calificacion ya quedo adentro del GeoJSON de S3, y un campo que
+        # falta en Airtable no puede dejar el viaje de alguien sin subir.
+        if "UNKNOWN_FIELD_NAME" not in str(exc.detail):
+            raise
+        await airtable.guardar(settings, tabla, campos, record_id)
     return llave
+
+
+async def _cerrar_vuelta(
+    settings: Settings, identidad: Identidad, t: TrazadoSync
+) -> None:
+    """Si el recorrido es de una vuelta de camiones, guarda su seguimiento.
+
+    Va antes de subir la geometria y no depende de ella: cerrar la vuelta es
+    lo que le permite al conductor tomar la siguiente, y eso no puede esperar
+    a que S3 acepte el archivo. Nunca hace fallar el trazado: si no se pudo,
+    el recorrido sube igual y el seguimiento se reintenta con el.
+    """
+    if t.viaje is None:
+        return
+    try:
+        await camiones.seguimiento(
+            settings,
+            identidad,
+            t.viaje.codigo,
+            t.viaje.model_copy(update={"trazado": t.viaje.trazado or t.codigo}),
+        )
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def _calificacion(t: TrazadoSync) -> dict[str, Any]:
+    """Los campos de la calificacion de la ruta, si la hubo."""
+    if t.calificacion is None:
+        return {}
+    motivos = ", ".join(MOTIVOS_RUTA.get(m, m) for m in t.calificacion_motivos or [])
+    comentario = (t.calificacion_comentario or "").strip()
+    campos: dict[str, Any] = {"Calificacion": t.calificacion}
+    if motivos:
+        campos["Motivos calificacion"] = motivos
+    if comentario:
+        campos["Comentario calificacion"] = comentario
+    return campos
+
+
+async def _waypoint(
+    settings: Settings,
+    w: WaypointSync,
+    proyecto_id: str,
+    usuario_id: str,
+) -> None:
+    """Sube un punto marcado. Todo cabe en la fila: no hay nada que mandar a S3."""
+    tabla = settings.airtable_tabla_waypoints
+    existente = await airtable.buscar_uno(
+        settings, tabla, airtable.formula_codigo("Codigo waypoint", w.codigo)
+    )
+    # Igual que con los trazados: el UUID lo genera el telefono, y sin esto
+    # quien conozca el codigo de un punto ajeno lo pisa.
+    if existente and proyecto_id not in existente.get("fields", {}).get("Proyecto", []):
+        raise RechazoItem("Ese codigo de punto ya esta usado por otro registro.")
+
+    campos: dict[str, Any] = {
+        "Codigo waypoint": w.codigo,
+        "Nombre": w.nombre.strip(),
+        "Latitud": round(w.latitud, 6),
+        "Longitud": round(w.longitud, 6),
+        "Simbolo": SIMBOLOS_WAYPOINT[w.simbolo],
+        "Marcado en": w.marcado_en.isoformat(),
+        "Proyecto": [proyecto_id],
+        "Marcado por": [usuario_id],
+    }
+    opcionales = {
+        "Altitud (m)": _redondeo(w.altitud_m, 1),
+        "Precision (m)": _redondeo(w.precision_m, 1),
+        "Nota": (w.nota or "").strip() or None,
+    }
+    campos.update({k: v for k, v in opcionales.items() if v is not None})
+
+    if w.trazado_codigo:
+        trazado = await airtable.buscar_uno(
+            settings,
+            settings.airtable_tabla_trazados,
+            airtable.formula_codigo("Codigo trazado", w.trazado_codigo),
+        )
+        # Se enlaza solo si el recorrido es del mismo proyecto, que es de quien
+        # sube. Si todavia no subio -o se borro del telefono antes de subir- el
+        # punto queda sin enlace: sigue siendo un punto valido.
+        if trazado and proyecto_id in trazado.get("fields", {}).get("Proyecto", []):
+            campos["Trazado"] = [trazado["id"]]
+
+    await airtable.guardar(settings, tabla, campos, existente["id"] if existente else None)
 
 
 def _redondeo(valor: float | None, decimales: int) -> float | None:

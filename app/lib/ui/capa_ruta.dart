@@ -136,10 +136,24 @@ class PanelRuta extends StatelessWidget {
     this.onGuardar,
     this.guardada = false,
     this.nombreDestino,
+    this.enRuta = false,
+    this.onIniciar,
+    this.onTerminar,
     super.key,
   });
 
   final Ruta ruta;
+
+  /// Si la ruta ya se inicio: se esta grabando por donde se va, y al terminar
+  /// se pregunta que tal estuvo.
+  final bool enRuta;
+
+  /// Iniciar la ruta. Nulo si no se puede -ya hay otro recorrido grabandose-,
+  /// y entonces el boton no se muestra.
+  final VoidCallback? onIniciar;
+
+  /// Terminar la ruta que se inicio, antes de llegar. Al llegar termina sola.
+  final VoidCallback? onTerminar;
 
   /// Guardar la ruta para volver a abrirla. Nulo mientras se recalcula: la
   /// linea que se ve en ese momento es la vieja.
@@ -179,60 +193,95 @@ class PanelRuta extends StatelessWidget {
       elevation: 6,
       child: Padding(
         padding: const EdgeInsets.fromLTRB(16, 12, 8, 12),
-        child: Row(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(
-              calculando ? Icons.autorenew : Icons.directions,
-              color: colores.primary,
-              size: 30,
-            ),
-            const SizedBox(width: 14),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                // Sin esto la columna se estira a todo el alto que le ofrece
-                // el Stack y la tarjeta tapa el mapa entero.
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  if (nombreDestino != null)
-                    Text(
-                      nombreDestino!,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        fontSize: 12.5,
-                        fontWeight: FontWeight.w600,
-                        color: colores.primary,
+            Row(
+              children: [
+                Icon(
+                  calculando ? Icons.autorenew : Icons.directions,
+                  color: colores.primary,
+                  size: 30,
+                ),
+                const SizedBox(width: 14),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    // Sin esto la columna se estira a todo el alto que le ofrece
+                    // el Stack y la tarjeta tapa el mapa entero.
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      if (nombreDestino != null)
+                        Text(
+                          nombreDestino!,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w800,
+                            color: colores.primary,
+                          ),
+                        ),
+                      Text(
+                        '${formatearDistancia(restantes)}  ·  ${formatearMinutos(minutos)}',
+                        style: const TextStyle(
+                          fontSize: 22,
+                          fontWeight: FontWeight.w800,
+                          fontFeatures: [FontFeature.tabularFigures()],
+                        ),
                       ),
-                    ),
-                  Text(
-                    '${formatearDistancia(restantes)}  ·  ${formatearMinutos(minutos)}',
-                    style: const TextStyle(
-                      fontSize: 18,
-                      fontWeight: FontWeight.w700,
-                      fontFeatures: [FontFeature.tabularFigures()],
-                    ),
+                      const SizedBox(height: 2),
+                      Text(
+                        _detalle(),
+                        style: TextStyle(
+                          fontSize: 14.5,
+                          color: colores.onSurfaceVariant,
+                        ),
+                      ),
+                    ],
                   ),
-                  const SizedBox(height: 2),
-                  Text(
-                    _detalle(),
-                    style: TextStyle(fontSize: 12.5, color: colores.outline),
+                ),
+                IconButton(
+                  onPressed: guardada ? null : onGuardar,
+                  icon: Icon(
+                    guardada ? Icons.bookmark : Icons.bookmark_add_outlined,
                   ),
-                ],
+                  tooltip: guardada ? 'Ruta guardada' : 'Guardar la ruta',
+                ),
+                IconButton(
+                  onPressed: onCerrar,
+                  icon: const Icon(Icons.close),
+                  tooltip: enRuta ? 'Terminar la ruta' : 'Quitar la ruta',
+                ),
+              ],
+            ),
+            // Iniciar es un boton y no algo que pasa solo al marcar el punto:
+            // marcar un destino es mirar cuanto falta, y de ahi a salir hay un
+            // paso. Lo que se inicia se graba y se califica al final.
+            if (enRuta && onTerminar != null)
+              Padding(
+                padding: const EdgeInsets.only(top: 8, right: 8),
+                child: SizedBox(
+                  width: double.infinity,
+                  child: FilledButton.tonalIcon(
+                    onPressed: onTerminar,
+                    icon: const Icon(Icons.flag_outlined, size: 18),
+                    label: const Text('Terminar la ruta'),
+                  ),
+                ),
+              )
+            else if (!enRuta && onIniciar != null)
+              Padding(
+                padding: const EdgeInsets.only(top: 8, right: 8),
+                child: SizedBox(
+                  width: double.infinity,
+                  child: FilledButton.icon(
+                    onPressed: calculando ? null : onIniciar,
+                    icon: const Icon(Icons.navigation, size: 18),
+                    label: const Text('Iniciar la ruta'),
+                  ),
+                ),
               ),
-            ),
-            IconButton(
-              onPressed: guardada ? null : onGuardar,
-              icon: Icon(
-                guardada ? Icons.bookmark : Icons.bookmark_add_outlined,
-              ),
-              tooltip: guardada ? 'Ruta guardada' : 'Guardar la ruta',
-            ),
-            IconButton(
-              onPressed: onCerrar,
-              icon: const Icon(Icons.close),
-              tooltip: 'Quitar la ruta',
-            ),
           ],
         ),
       ),
@@ -241,6 +290,7 @@ class PanelRuta extends StatelessWidget {
 
   String _detalle() {
     if (calculando) return 'Te saliste de la ruta, recalculando...';
+    if (enRuta) return 'En ruta: se esta grabando por donde vas';
 
     // Los metros a pie se avisan siempre que sean algo mas que el ancho de la
     // via: son los que no se hacen en camioneta.

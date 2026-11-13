@@ -1,11 +1,36 @@
-/// La captura de un trazado en curso.
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+
+import '../data/db/app_database.dart';
+import '../data/waypoints_repository.dart';
+import 'providers.dart';
+import 'sesion.dart';
+import 'sincronizador.dart';
+
+/// Lo que la cuenta levanto en campo, listo para que el mapa y las listas lo
+/// lean: los recorridos grabados, las areas medidas y los puntos marcados.
 ///
-/// Los tres contadores no son estadistica, son la respuesta a si esto esta
-/// funcionando estando parado en el lote. Un intervalo de 10 s que lleva 6
-/// puntos y descarto 14 por cercania esta trabajando bien: el tecnico se quedo
-/// quieto. Uno que descarto 20 por precision esta diciendo que bajo los
-/// arboles no hay senal y que hay que salir al claro.
-class CapturaState {
-  // TODO: capturando, buscandoGps, agregados,
-  //       descartadosCerca, descartadosPrecision, precisionUltima
-}
+/// La grabacion en curso no vive aca sino en `state/grabacion.dart`, que es
+/// quien escucha el GPS. Esto es lo que ya quedo guardado.
+
+final waypointsRepositoryProvider = Provider<WaypointsRepository>(
+  (ref) => WaypointsRepository(ref.watch(dbProvider)),
+);
+
+/// Recorridos grabados y areas medidas de la cuenta que esta adentro, lo mas
+/// nuevo arriba.
+final levantadosProvider = StreamProvider<List<Trazado>>((ref) {
+  final usuario = ref.watch(
+    sesionProvider.select((e) => e.sesion?.codigoUsuario),
+  );
+  if (usuario == null) return Stream.value(const []);
+  return ref.watch(trazadosRepositoryProvider).observarLevantados(usuario);
+});
+
+/// Los puntos marcados de la cuenta que esta adentro.
+final puntosProvider = StreamProvider<List<Waypoint>>((ref) {
+  final usuario = ref.watch(
+    sesionProvider.select((e) => e.sesion?.codigoUsuario),
+  );
+  if (usuario == null) return Stream.value(const []);
+  return ref.watch(waypointsRepositoryProvider).observar(usuario);
+});

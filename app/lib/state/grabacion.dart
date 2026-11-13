@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:geolocator/geolocator.dart';
 
+import '../camiones/seguimiento.dart';
 import '../core/geo.dart';
 import '../core/ubicacion.dart';
 import '../data/trazados_repository.dart';
@@ -22,6 +23,8 @@ class EstadoGrabacion {
     this.inicio,
     this.destino,
     this.destinoNombre,
+    this.propiedades = const {},
+    this.linea = const [],
     this.abiertaSinGrabar = false,
   });
 
@@ -39,11 +42,26 @@ class EstadoGrabacion {
   final PuntoGeo? destino;
   final String? destinoNombre;
 
+  /// Lo que se guardo con el recorrido al empezarlo: de que vuelta de la
+  /// planilla es, donde dejar el vagon vacio. Lo lee quien abrio la grabacion;
+  /// el grabador solo lo lleva y lo devuelve.
+  final Map<String, Object?> propiedades;
+
+  /// Los puntos grabados hasta ahora, para dibujar en el mapa por donde se
+  /// vino. Es la misma lista que crece adentro del grabador, sin copiar: en un
+  /// viaje de dos horas son miles de puntos y copiarlos con cada fix seria
+  /// trabajo tirado. Quien la lee no la modifica.
+  final List<PuntoGeo> linea;
+
   /// Hay una grabacion abierta de antes -la app se cerro a mitad del viaje- y
   /// todavia no se retomo. La pantalla ofrece seguirla o terminarla.
   final bool abiertaSinGrabar;
 
   bool get grabando => codigo != null && !abiertaSinGrabar;
+
+  /// Si lo que se graba es la vuelta de un camion. Una vuelta no se corta
+  /// como un recorrido cualquiera: se finaliza con sus reglas.
+  bool get esVuelta => codigo != null && propiedades['vuelta_id'] != null;
 }
 
 /// Graba un recorrido con el GPS: el viaje de un camion, y mas adelante el
@@ -55,7 +73,7 @@ class EstadoGrabacion {
 /// final: si Android mata la app en la mitad del viaje, se pierde a lo sumo el
 /// ultimo tramo, y al volver la grabacion se puede retomar.
 class Grabador extends StateNotifier<EstadoGrabacion> {
-  Grabador(this._trazados, this._usuario, this._alCerrar)
+  Grabador(this._trazados, this._usuario, this._alCerrar, {this.vigia})
     : super(const EstadoGrabacion()) {
     _buscarAbierta();
   }
@@ -65,6 +83,12 @@ class Grabador extends StateNotifier<EstadoGrabacion> {
 
   /// Que hacer con un trazado recien cerrado: subirlo.
   final void Function() _alCerrar;
+
+  /// Quien mira cada posicion mientras se graba y le anota cosas al
+  /// recorrido: si el camion ya llego a los vagones, si ya volvio. Va aca y
+  /// no en una pantalla porque el grabador es lo unico que sigue vivo con el
+  /// telefono en el bolsillo.
+  final VigiaDeVueltas? vigia;
 
   /// Un fix con mas error que esto no entra en la linea. Bajo palma cerrada el
   /// GPS da saltos de 60 m, y un viaje con esos picos mide kilometros de mas.
@@ -109,6 +133,8 @@ class Grabador extends StateNotifier<EstadoGrabacion> {
               (destino[0] as num).toDouble(),
             ),
       destinoNombre: propiedades['destino_nombre'] as String?,
+      propiedades: propiedades,
+      linea: _puntos,
       abiertaSinGrabar: true,
     );
   }
@@ -123,20 +149,24 @@ class Grabador extends StateNotifier<EstadoGrabacion> {
   }) async {
     final usuario = _usuario;
     if (usuario == null) return;
+    // Una vuelta en curso no se corta por empezar otra cosa: se finaliza.
+    if (state.esVuelta) return;
     if (state.codigo != null) await terminar();
 
+    final todas = <String, Object?>{
+      ...propiedades,
+      // [lon, lat], como todo en el GeoJSON.
+      if (destino != null) 'destino': [destino.longitud, destino.latitud],
+      'destino_nombre': destinoNombre,
+    };
     final fila = await _trazados.abrirGrabacion(
       usuarioCodigo: usuario,
       nombre: nombre,
-      propiedades: {
-        ...propiedades,
-        // [lon, lat], como todo en el GeoJSON.
-        if (destino != null) 'destino': [destino.longitud, destino.latitud],
-        'destino_nombre': destinoNombre,
-      },
+      propiedades: todas,
     );
     _puntos.clear();
     _precisiones.clear();
+    _sinGuardar = 0;
     if (!mounted) return;
     state = EstadoGrabacion(
       codigo: fila.codigo,
@@ -144,6 +174,8 @@ class Grabador extends StateNotifier<EstadoGrabacion> {
       inicio: fila.iniciadoEn,
       destino: destino,
       destinoNombre: destinoNombre,
+      propiedades: todas,
+      linea: _puntos,
     );
     _escuchar();
   }
@@ -159,12 +191,38 @@ class Grabador extends StateNotifier<EstadoGrabacion> {
       inicio: state.inicio,
       destino: state.destino,
       destinoNombre: state.destinoNombre,
+      propiedades: state.propiedades,
+      linea: _puntos,
     );
     _escuchar();
+    // Lo que se grabo antes de que la app se cerrara tambien cuenta.
+    final cambios = vigia?.alRetomar(_puntos, state.propiedades);
+    if (cambios != null) unawaited(anotar(cambios));
+  }
+
+  /// Suma [cambios] a lo que el recorrido lleva guardado, sin cerrarlo, y lo
+  /// deja en la base del telefono: lo que se anota a mitad de camino tiene
+  /// que seguir ahi si la app se cierra.
+  Future<void> anotar(Map<String, Object?> cambios) async {
+    final codigo = state.codigo;
+    if (codigo == null || cambios.isEmpty) return;
+    state = _con(propiedades: {...state.propiedades, ...cambios});
+    // Se guardan todas y no solo las nuevas: este guardado y el de cada
+    // tantos puntos pueden cruzarse, y el que llegue ultimo no puede pisar
+    // con una copia vieja lo que el otro acaba de anotar.
+    await _trazados.guardarAvance(
+      codigo,
+      List.of(_puntos),
+      propiedades: state.propiedades,
+    );
   }
 
   /// Cierra la grabacion, calcula sus numeros y la manda a subir.
-  Future<void> terminar() async {
+  ///
+  /// [propiedades] se suma a lo que el recorrido ya llevaba guardado: es por
+  /// donde entra lo que solo se sabe al final, como la calificacion de la
+  /// ruta.
+  Future<void> terminar({Map<String, Object?> propiedades = const {}}) async {
     final codigo = state.codigo;
     if (codigo == null) return;
     await _soltarGps();
@@ -176,11 +234,26 @@ class Grabador extends StateNotifier<EstadoGrabacion> {
       codigo,
       List.of(_puntos),
       precisionMediaM: precision,
+      propiedades: {...state.propiedades, ...propiedades},
     );
     _puntos.clear();
     _precisiones.clear();
     if (mounted) state = const EstadoGrabacion();
     _alCerrar();
+  }
+
+  /// Tira la grabacion sin guardarla: el viaje no se hizo.
+  ///
+  /// Es lo que pasa al soltar una vuelta tomada por error. Cerrarla la subiria
+  /// a la base como un viaje de esa vuelta, que es justo lo que no fue.
+  Future<void> descartar() async {
+    final codigo = state.codigo;
+    if (codigo == null) return;
+    await _soltarGps();
+    await _trazados.borrar(codigo);
+    _puntos.clear();
+    _precisiones.clear();
+    if (mounted) state = const EstadoGrabacion();
   }
 
   void _escuchar() {
@@ -199,6 +272,9 @@ class Grabador extends StateNotifier<EstadoGrabacion> {
     if (!mounted || state.codigo == null) return;
     // La ultima conocida que se repite al reabrir el flujo no es del viaje.
     if (Ubicacion.esDeCache(p)) return;
+
+    final cambios = vigia?.alFix(p, state.propiedades);
+    if (cambios != null) unawaited(anotar(cambios));
 
     if (p.accuracy > precisionMaximaM) {
       state = _con(precision: p.accuracy);
@@ -222,21 +298,34 @@ class Grabador extends StateNotifier<EstadoGrabacion> {
 
     if (++_sinGuardar >= guardarCada) {
       _sinGuardar = 0;
-      unawaited(_trazados.guardarAvance(state.codigo!, List.of(_puntos)));
+      unawaited(
+        _trazados.guardarAvance(
+          state.codigo!,
+          List.of(_puntos),
+          propiedades: state.propiedades,
+        ),
+      );
     }
   }
 
-  EstadoGrabacion _con({double? precision, int? puntos, double? metros}) =>
-      EstadoGrabacion(
-        codigo: state.codigo,
-        nombre: state.nombre,
-        puntos: puntos ?? state.puntos,
-        metros: metros ?? state.metros,
-        precisionUltimaM: precision ?? state.precisionUltimaM,
-        inicio: state.inicio,
-        destino: state.destino,
-        destinoNombre: state.destinoNombre,
-      );
+  EstadoGrabacion _con({
+    double? precision,
+    int? puntos,
+    double? metros,
+    Map<String, Object?>? propiedades,
+  }) => EstadoGrabacion(
+    codigo: state.codigo,
+    nombre: state.nombre,
+    puntos: puntos ?? state.puntos,
+    metros: metros ?? state.metros,
+    precisionUltimaM: precision ?? state.precisionUltimaM,
+    inicio: state.inicio,
+    destino: state.destino,
+    destinoNombre: state.destinoNombre,
+    propiedades: propiedades ?? state.propiedades,
+    linea: _puntos,
+    abiertaSinGrabar: state.abiertaSinGrabar,
+  );
 
   @override
   void dispose() {
@@ -244,7 +333,13 @@ class Grabador extends StateNotifier<EstadoGrabacion> {
     // grabacion queda abierta, para retomarla o cerrarla al volver.
     final codigo = state.codigo;
     if (codigo != null && _gps != null) {
-      unawaited(_trazados.guardarAvance(codigo, List.of(_puntos)));
+      unawaited(
+        _trazados.guardarAvance(
+          codigo,
+          List.of(_puntos),
+          propiedades: state.propiedades,
+        ),
+      );
     }
     _gps?.cancel();
     if (_gps != null) Gps.instancia.grabarEnFondo(false);
@@ -259,5 +354,11 @@ final grabadorProvider = StateNotifierProvider<Grabador, EstadoGrabacion>((
     ref.watch(trazadosRepositoryProvider),
     ref.watch(sesionProvider.select((e) => e.sesion?.codigoUsuario)),
     () => ref.read(sincronizadorProvider.notifier).sincronizar(),
+    // Cuando el camion llega o vuelve, se avisa al backend por si hay senal.
+    // Si no la hay no pasa nada: sube despues, con el recorrido.
+    vigia: VigiaDeVueltas(
+      avisar: (propiedades) =>
+          unawaited(avisarSeguimiento(ref.read(apiProvider), propiedades)),
+    ),
   );
 });

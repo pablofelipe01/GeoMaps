@@ -19,6 +19,9 @@ Lo que este backend hace y lo que no:
 Las tres devuelven exactamente el mismo `EntrarResponse`. La app tiene dos
 formularios antes del login y un solo camino despues.
 
+    POST /v1/sesion/renovar  Cambia un JWT vigente por uno nuevo, con lo que
+                             la cuenta tenga hoy en Airtable (perfiles, rol).
+
 ## Versiones de la app
 
 Toda llamada de la app trae `X-App-Version` (el versionCode del APK). Si esa
@@ -45,7 +48,15 @@ from pydantic import BaseModel
 
 from . import paginas
 from .config import Settings, get_settings
-from .schemas_camiones import ConfirmarRequest, ConfirmarResponse, VueltasResponse
+from .schemas_camiones import (
+    ConfirmarRequest,
+    ConfirmarResponse,
+    MiViajeResponse,
+    SeguimientoRequest,
+    SeguimientoResponse,
+    SoltarResponse,
+    VueltasResponse,
+)
 from .schemas_sync import SyncRequest, SyncResponse
 from .services import (
     airtable,
@@ -414,6 +425,59 @@ async def entrar_con_clave(
     return _armar_sesion(identidad, "Correo", settings)
 
 
+@app.post("/v1/sesion/renovar", response_model=EntrarResponse)
+async def renovar_sesion(
+    identidad: auth.Identidad = Depends(auth.identidad_de_request),
+    _: None = Depends(auth.verificar_api_key),
+) -> EntrarResponse:
+    """Cambia un JWT vigente por uno nuevo, leyendo la cuenta de Airtable.
+
+    Existe por dos cosas que el JWT de 30 dias no resuelve solo:
+
+    - **Los perfiles viajan adentro del token.** Darle a alguien el perfil de
+      camiones en Airtable no le llegaba hasta que cerrara sesion y volviera a
+      entrar, y a un conductor no se le puede pedir eso por telefono. Con esto
+      le llega la proxima vez que abre la app con senal.
+    - **El plazo se corre.** Quien abre la app con senal cada tanto no vuelve a
+      ver el login nunca: los 30 dias cuentan desde la ultima renovacion.
+
+    Es la unica llamada de sesion que si consulta Airtable; la app la hace a lo
+    sumo una vez cada tantas horas. Una cuenta suspendida o borrada no renueva.
+    """
+    settings = get_settings()
+    fila = await airtable.buscar_uno(
+        settings,
+        settings.airtable_tabla_usuarios,
+        airtable.formula_codigo("Auth UID", identidad.auth_uid),
+    )
+    if not fila:
+        raise HTTPException(
+            status_code=403,
+            detail="Tu cuenta ya no esta en la base. Escribinos para revisarla.",
+        )
+    campos = fila.get("fields", {})
+    if campos.get("Estado") == "Suspendida":
+        raise HTTPException(
+            status_code=403,
+            detail="Esta cuenta esta suspendida. Escribinos para reactivarla.",
+        )
+
+    correo = campos.get("Correo") or identidad.correo
+    completa = auth.Identidad(
+        auth_uid=identidad.auth_uid,
+        correo=correo,
+        nombre=campos.get("Nombre") or correo.split("@")[0],
+        foto=campos.get("Foto"),
+        codigo_usuario=campos.get("Codigo usuario") or identidad.codigo_usuario,
+        rol=campos.get("Rol") or "Usuario",
+        perfiles=auth.perfiles_de_campos(campos),
+    )
+    proveedor = campos.get("Proveedor") or (
+        "Correo" if campos.get("Hash clave") else "Google"
+    )
+    return _armar_sesion(completa, proveedor, settings)
+
+
 class VersionResponse(BaseModel):
     """Lo que la app necesita para decidir si se bloquea, y para bajar el APK.
 
@@ -558,7 +622,7 @@ async def sync(
     identidad: auth.Identidad = Depends(auth.identidad_de_request),
     _: None = Depends(auth.verificar_api_key),
 ) -> SyncResponse:
-    """Sube lo que el telefono guardo sin senal. Hoy: los trazados.
+    """Sube lo que el telefono guardo sin senal: trazados y puntos marcados.
 
     Responde 200 aunque algun trazado no haya quedado: el detalle va por item,
     y el telefono reintenta solo esos. Un error de la tanda entera seria pedirle
@@ -572,9 +636,14 @@ async def vueltas_pendientes(
     identidad: auth.Identidad = Depends(auth.identidad_de_request),
     _: None = Depends(auth.verificar_api_key),
 ) -> VueltasResponse:
-    """Las vueltas por recoger de la planilla de SiriusFleet. Lo que abre el QR."""
+    """Las vueltas por recoger de la planilla de SiriusFleet. Lo que abre el QR.
+
+    Trae tambien `conductor` -a nombre de quien quedan y si hay que pedirle
+    clave- y `viaje_abierto`: la vuelta que esta cuenta tomo y no finalizo.
+    Mientras tenga una no puede tomar otra.
+    """
     auth.exigir_perfil(identidad, "camiones")
-    return VueltasResponse(vueltas=await camiones.pendientes(get_settings()))
+    return await camiones.pendientes(get_settings(), identidad)
 
 
 @app.post("/v1/camiones/vueltas/{vuelta_id}/confirmar", response_model=ConfirmarResponse)
@@ -591,6 +660,47 @@ async def confirmar_vuelta(
     """
     auth.exigir_perfil(identidad, "camiones")
     return await camiones.confirmar(get_settings(), identidad, str(vuelta_id), req)
+
+
+@app.post("/v1/camiones/vueltas/{vuelta_id}/soltar", response_model=SoltarResponse)
+async def soltar_vuelta(
+    vuelta_id: uuid.UUID,
+    identidad: auth.Identidad = Depends(auth.identidad_de_request),
+    _: None = Depends(auth.verificar_api_key),
+) -> SoltarResponse:
+    """El conductor devuelve a la lista una vuelta que tomo y no va a hacer."""
+    auth.exigir_perfil(identidad, "camiones")
+    return SoltarResponse(
+        vuelta=await camiones.soltar(get_settings(), identidad, str(vuelta_id))
+    )
+
+
+@app.get("/v1/camiones/viaje", response_model=MiViajeResponse)
+async def mi_viaje(
+    identidad: auth.Identidad = Depends(auth.identidad_de_request),
+    _: None = Depends(auth.verificar_api_key),
+) -> MiViajeResponse:
+    """La vuelta sin finalizar de esta cuenta, segun el servidor."""
+    auth.exigir_perfil(identidad, "camiones")
+    return await camiones.mi_viaje(get_settings(), identidad)
+
+
+@app.post(
+    "/v1/camiones/viajes/{codigo}/seguimiento", response_model=SeguimientoResponse
+)
+async def seguimiento_viaje(
+    codigo: uuid.UUID,
+    req: SeguimientoRequest,
+    identidad: auth.Identidad = Depends(auth.identidad_de_request),
+    _: None = Depends(auth.verificar_api_key),
+) -> SeguimientoResponse:
+    """El telefono avisa por donde va la vuelta: llego, volvio, la finalizo.
+
+    Es el aviso en vivo, para cuando hay senal. El que no se pierde es el que
+    viaja con el recorrido grabado en `/v1/sync`: trae lo mismo y sube solo.
+    """
+    auth.exigir_perfil(identidad, "camiones")
+    return await camiones.seguimiento(get_settings(), identidad, str(codigo), req)
 
 
 # TODO: GET  /v1/proyectos         espejo del directorio, filtrado por dueno

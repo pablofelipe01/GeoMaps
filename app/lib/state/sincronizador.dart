@@ -6,10 +6,12 @@ import 'package:drift/drift.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:uuid/uuid.dart';
 
+import '../camiones/seguimiento.dart';
 import '../core/api_client.dart';
 import '../data/db/app_database.dart';
 import '../data/db/enums.dart';
 import '../data/trazados_repository.dart';
+import '../data/waypoints_repository.dart';
 import 'providers.dart';
 import 'red.dart';
 import 'sesion.dart';
@@ -44,17 +46,19 @@ class EstadoSincronizacion {
 ///
 ///   Proyectos -> Mapas -> Trazados -> Waypoints -> Archivos -> Sincronizaciones
 ///
-/// Hoy sube los trazados, que es lo unico que el telefono genera. Cada paso es
+/// Hoy sube los trazados y los puntos marcados, en ese orden. Cada paso es
 /// un upsert por UUID: si una tanda se corta, la siguiente no duplica lo que ya
 /// quedo. Cada intento deja una fila en `Sincronizaciones` local, y el backend
 /// deja otra en Airtable: entre las dos se explica un dato que alguien dice que
 /// no aparece.
 class Sincronizador extends StateNotifier<EstadoSincronizacion> {
   Sincronizador(this._db, this._trazados, this._api, this._usuario)
-    : super(const EstadoSincronizacion());
+    : _waypoints = WaypointsRepository(_db),
+      super(const EstadoSincronizacion());
 
   final AppDatabase _db;
   final TrazadosRepository _trazados;
+  final WaypointsRepository _waypoints;
   final ApiClient _api;
   final String? _usuario;
 
@@ -67,6 +71,10 @@ class Sincronizador extends StateNotifier<EstadoSincronizacion> {
   /// tiempo limitado y Airtable a cinco escrituras por segundo: una tanda chica
   /// que se corta pierde poco.
   static const tanda = 5;
+
+  /// Los puntos entran de a mas: del otro lado son dos llamadas y ninguna a
+  /// S3. El tope lo fija el backend en `SyncRequest`.
+  static const tandaPuntos = 20;
 
   /// Sube todo lo pendiente. Llamarlo dos veces seguidas no sube dos veces:
   /// mientras corre, la segunda llamada vuelve sin hacer nada.
@@ -85,11 +93,13 @@ class Sincronizador extends StateNotifier<EstadoSincronizacion> {
 
   Future<void> _subir(String usuario) async {
     final pendientes = await _trazados.pendientes(usuario);
-    if (pendientes.isEmpty || !mounted) return;
+    final hayPuntos = (await _waypoints.pendientes(usuario)).isNotEmpty;
+    if ((pendientes.isEmpty && !hayPuntos) || !mounted) return;
 
     state = EstadoSincronizacion(subiendo: true, ultimaVez: state.ultimaVez);
     final inicio = DateTime.now();
     var subidos = 0;
+    var enviados = pendientes.length;
     final errores = <String>[];
 
     try {
@@ -112,6 +122,42 @@ class Sincronizador extends StateNotifier<EstadoSincronizacion> {
           }
         }
       }
+
+      // Los puntos se leen recien aca: los que esperaban a su recorrido ya
+      // pueden subir si el recorrido acaba de quedar arriba.
+      final puntos = await _waypoints.pendientes(usuario);
+      enviados += puntos.length;
+      for (var i = 0; i < puntos.length; i += tandaPuntos) {
+        final parte = puntos.skip(i).take(tandaPuntos).toList();
+        final respuesta = await _api.sincronizar({
+          'waypoints': [for (final w in parte) _puntoAJson(w)],
+        });
+        final resultados = respuesta['waypoints'] as List<dynamic>?;
+        if (resultados == null) {
+          // Un backend anterior a los puntos: acepta la llamada y no dice
+          // nada de ellos. No es un error del telefono ni se arregla
+          // reintentando ahora.
+          errores.add(
+            'El servidor todavia no recibe puntos marcados. Quedan guardados '
+            'en el telefono y suben cuando se actualice.',
+          );
+          break;
+        }
+        for (final r in resultados.cast<Map<String, dynamic>>()) {
+          if (r['ok'] == true) {
+            await _waypoints.marcarSubido(r['codigo'] as String);
+            subidos++;
+          } else {
+            final nombre =
+                parte
+                    .where((w) => w.codigo == r['codigo'])
+                    .firstOrNull
+                    ?.nombre ??
+                '${r['codigo']}';
+            errores.add('$nombre: ${r['error']}');
+          }
+        }
+      }
     } on ApiError catch (e) {
       errores.add(
         e.sesionInvalida
@@ -127,8 +173,8 @@ class Sincronizador extends StateNotifier<EstadoSincronizacion> {
       errores.add('$e');
     }
 
-    final fallidos = pendientes.length - subidos;
-    await _anotar(inicio, pendientes.length, subidos, errores);
+    final fallidos = enviados - subidos;
+    await _anotar(inicio, enviados, subidos, errores);
     // Cerrar sesion a mitad de la subida descarta este notifier.
     if (!mounted) return;
     state = EstadoSincronizacion(
@@ -139,21 +185,56 @@ class Sincronizador extends StateNotifier<EstadoSincronizacion> {
     );
   }
 
-  Map<String, dynamic> _aJson(Trazado t) => {
-    'codigo': t.codigo,
-    'proyecto_codigo': t.proyectoCodigo,
-    'nombre': t.nombre,
-    'tipo': t.tipo,
-    'metodo': t.metodo,
-    'geometria': jsonDecode(t.geometria),
-    'distancia_m': t.distanciaM,
-    'area_ha': t.areaHa,
-    'precision_media_m': t.precisionMediaM,
-    'bbox': t.bbox,
-    'centro_lat': t.centroLat,
-    'centro_lon': t.centroLon,
-    'iniciado_en': t.iniciadoEn?.toUtc().toIso8601String(),
-    'terminado_en': t.terminadoEn?.toUtc().toIso8601String(),
+  Map<String, dynamic> _aJson(Trazado t) {
+    final geometria = jsonDecode(t.geometria) as Map<String, dynamic>;
+    // La calificacion vive en las propiedades del GeoJSON. Se manda tambien
+    // aparte para que el backend la ponga en la fila de Airtable, donde se
+    // puede filtrar sin bajar el archivo.
+    final propiedades =
+        geometria['properties'] as Map<String, dynamic>? ?? const {};
+    // Si es la vuelta de un camion, su seguimiento viaja con el recorrido:
+    // es lo que la cierra en el servidor cuando se finalizo sin senal.
+    final viaje = SeguimientoVuelta.cuerpo(
+      propiedades,
+      recorridoM: t.distanciaM,
+    );
+    return {
+      'codigo': t.codigo,
+      'proyecto_codigo': t.proyectoCodigo,
+      'nombre': t.nombre,
+      'tipo': t.tipo,
+      'metodo': t.metodo,
+      'geometria': geometria,
+      if (propiedades['calificacion'] is int)
+        'calificacion': propiedades['calificacion'],
+      if (propiedades['calificacion_motivos'] is List)
+        'calificacion_motivos': propiedades['calificacion_motivos'],
+      if (propiedades['calificacion_comentario'] is String)
+        'calificacion_comentario': propiedades['calificacion_comentario'],
+      if (viaje != null) 'viaje': {'codigo': propiedades['viaje'], ...viaje},
+      'distancia_m': t.distanciaM,
+      'area_ha': t.areaHa,
+      'precision_media_m': t.precisionMediaM,
+      'bbox': t.bbox,
+      'centro_lat': t.centroLat,
+      'centro_lon': t.centroLon,
+      'iniciado_en': t.iniciadoEn?.toUtc().toIso8601String(),
+      'terminado_en': t.terminadoEn?.toUtc().toIso8601String(),
+    };
+  }
+
+  Map<String, dynamic> _puntoAJson(Waypoint w) => {
+    'codigo': w.codigo,
+    'proyecto_codigo': w.proyectoCodigo,
+    'trazado_codigo': w.trazadoCodigo,
+    'nombre': w.nombre,
+    'latitud': w.latitud,
+    'longitud': w.longitud,
+    'altitud_m': w.altitudM,
+    'precision_m': w.precisionM,
+    'simbolo': w.simbolo,
+    'nota': w.nota,
+    'marcado_en': w.marcadoEn.toUtc().toIso8601String(),
   };
 
   String _nombre(List<Trazado> parte, Object? codigo) =>
@@ -211,14 +292,51 @@ final rutasGuardadasProvider = StreamProvider<List<RutaGuardada>>((ref) {
   return ref.watch(trazadosRepositoryProvider).observarRutas(usuario);
 });
 
-/// Cuantos trazados faltan por subir.
+/// Cuanto falta por subir: trazados y puntos marcados.
 final pendientesProvider = StreamProvider<int>((ref) {
   final usuario = ref.watch(
     sesionProvider.select((e) => e.sesion?.codigoUsuario),
   );
   if (usuario == null) return Stream.value(0);
-  return ref.watch(trazadosRepositoryProvider).contarPendientes(usuario);
+  return sumarConteos(
+    ref.watch(trazadosRepositoryProvider).contarPendientes(usuario),
+    WaypointsRepository(ref.watch(dbProvider)).contarPendientes(usuario),
+  );
 });
+
+/// La suma de dos conteos en vivo. Emite en cuanto los dos dieron su primer
+/// valor, y de ahi en mas cada vez que cambia cualquiera.
+Stream<int> sumarConteos(Stream<int> a, Stream<int> b) {
+  late final StreamController<int> salida;
+  StreamSubscription<int>? subA;
+  StreamSubscription<int>? subB;
+  int? ultimoA;
+  int? ultimoB;
+
+  void emitir() {
+    final x = ultimoA;
+    final y = ultimoB;
+    if (x != null && y != null) salida.add(x + y);
+  }
+
+  salida = StreamController<int>(
+    onListen: () {
+      subA = a.listen((v) {
+        ultimoA = v;
+        emitir();
+      }, onError: salida.addError);
+      subB = b.listen((v) {
+        ultimoB = v;
+        emitir();
+      }, onError: salida.addError);
+    },
+    onCancel: () async {
+      await subA?.cancel();
+      await subB?.cancel();
+    },
+  );
+  return salida.stream;
+}
 
 /// Dispara la subida cuando vuelve la red, y una vez al arrancar.
 ///
@@ -230,6 +348,9 @@ final sincronizacionAutomaticaProvider = Provider<void>((ref) {
     final habia = antes?.valueOrNull?.hayRed ?? false;
     if (ahora.valueOrNull?.hayRed == true && !habia) {
       ref.read(sincronizadorProvider.notifier).sincronizar();
+      // Con senal, de paso se refresca la cuenta: es como le llega al
+      // telefono un perfil que se asigno en Airtable. Se limita sola.
+      ref.read(sesionProvider.notifier).renovar();
     }
   }, fireImmediately: true);
 });
