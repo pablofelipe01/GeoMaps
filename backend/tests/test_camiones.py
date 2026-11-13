@@ -69,6 +69,15 @@ class Mundo:
         self.salida[vuelta_id] = operador_id
         return True
 
+    async def anular_salida(self, settings, vuelta_id, operador_id):
+        if self.salida.get(vuelta_id) != operador_id:
+            return False
+        del self.salida[vuelta_id]
+        return True
+
+    async def vueltas_pendientes(self, settings):
+        return [await self.vuelta(settings, VUELTA)]
+
     async def vuelta(self, settings, vuelta_id):
         return {
             "id": vuelta_id,
@@ -91,7 +100,13 @@ def mundo(monkeypatch) -> Mundo:
     m = Mundo()
     for nombre in ("buscar_uno", "guardar", "upsert"):
         monkeypatch.setattr(airtable, nombre, getattr(m, nombre))
-    for nombre in ("operador_por_cedula", "anotar_salida", "vuelta"):
+    for nombre in (
+        "operador_por_cedula",
+        "anotar_salida",
+        "anular_salida",
+        "vuelta",
+        "vueltas_pendientes",
+    ):
         monkeypatch.setattr(supabase, nombre, getattr(m, nombre))
     return m
 
@@ -147,10 +162,97 @@ async def test_dos_camiones_por_la_misma_vuelta(mundo):
     assert mundo.salida[VUELTA] == "op-ana", "gana el primero"
 
 
-async def test_cuenta_de_google_no_tiene_clave_para_firmar(mundo):
-    google = auth.Identidad(
-        auth_uid="1234567890", correo="", nombre="", foto=None, perfiles=("camiones",)
-    )
+GOOGLE = auth.Identidad(
+    auth_uid="1234567890", correo="", nombre="", foto=None, perfiles=("camiones",)
+)
+
+
+async def test_cuenta_de_google_firma_con_la_sesion(mundo):
+    """Era el bug: la unica cuenta con perfil de camiones era de Google, y sin
+    clave no podia tomar ninguna vuelta."""
+    r = await _confirmar(GOOGLE, clave=None)
+
+    assert r.conductor == "ANA"
+    assert mundo.salida[VUELTA] == "op-ana"
+    assert mundo.usuarios["rec3"]["Cedula"] == "1122334"
+
+
+async def test_cuenta_con_clave_no_confirma_sin_ella(mundo):
     with pytest.raises(HTTPException) as exc:
-        await _confirmar(google)
+        await _confirmar(ANA, clave=None)
+    assert exc.value.status_code == 401
+    assert VUELTA not in mundo.salida
+    # No escribir nada no es un intento de adivinar: no suma al bloqueo.
+    assert "Intentos fallidos" not in mundo.usuarios["rec1"]
+
+
+async def test_la_cedula_se_pide_una_sola_vez(mundo):
+    await _confirmar(ANA)
+    r = await _confirmar(ANA, cedula=None, vuelta="otra-vuelta")
+
+    assert r.conductor == "ANA"
+    assert mundo.salida["otra-vuelta"] == "op-ana"
+
+
+async def test_la_primera_vez_hace_falta_la_cedula(mundo):
+    with pytest.raises(HTTPException) as exc:
+        await _confirmar(ANA, cedula=None)
+    assert exc.value.status_code == 422
+    assert VUELTA not in mundo.salida
+
+
+async def test_cuenta_suspendida_no_toma_vueltas(mundo):
+    mundo.usuarios["rec1"]["Estado"] = "Suspendida"
+    with pytest.raises(HTTPException) as exc:
+        await _confirmar(ANA)
+    assert exc.value.status_code == 403
+
+
+async def test_la_lista_dice_que_pedirle_a_la_cuenta(mundo):
+    antes = await camiones.pendientes(get_settings(), ANA)
+    assert len(antes.vueltas) == 1
+    assert antes.conductor.cedula is None
+    assert antes.conductor.pide_clave is True
+
+    await _confirmar(ANA)
+    despues = await camiones.pendientes(get_settings(), ANA)
+    assert despues.conductor.cedula == "1122334"
+    assert despues.conductor.nombre == "ANA"
+
+    de_google = await camiones.pendientes(get_settings(), GOOGLE)
+    assert de_google.conductor.pide_clave is False
+
+
+async def test_la_lista_sale_aunque_no_se_pueda_leer_la_cuenta(mundo, monkeypatch):
+    async def caido(*_, **__):
+        raise HTTPException(status_code=502, detail="Airtable respondio 503")
+
+    monkeypatch.setattr(airtable, "buscar_uno", caido)
+    r = await camiones.pendientes(get_settings(), ANA)
+    assert len(r.vueltas) == 1
+    assert r.conductor is None
+
+
+async def test_soltar_devuelve_la_vuelta_a_la_lista(mundo):
+    await _confirmar(ANA)
+    await camiones.soltar(get_settings(), ANA, VUELTA)
+    assert VUELTA not in mundo.salida
+
+    # Y otro la puede tomar.
+    await _confirmar(BETO, cedula="5566778")
+    assert mundo.salida[VUELTA] == "op-beto"
+
+
+async def test_nadie_suelta_la_vuelta_de_otro(mundo):
+    await _confirmar(ANA)
+    await _confirmar(BETO, cedula="5566778", vuelta="otra-vuelta")
+    with pytest.raises(HTTPException) as exc:
+        await camiones.soltar(get_settings(), BETO, VUELTA)
     assert exc.value.status_code == 409
+    assert mundo.salida[VUELTA] == "op-ana"
+
+
+async def test_sin_cedula_atada_no_hay_nada_que_soltar(mundo):
+    with pytest.raises(HTTPException) as exc:
+        await camiones.soltar(get_settings(), BETO, VUELTA)
+    assert exc.value.status_code == 403

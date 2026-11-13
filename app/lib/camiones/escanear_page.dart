@@ -114,13 +114,29 @@ class _SinCamara extends StatelessWidget {
       child: Center(
         child: Padding(
           padding: const EdgeInsets.all(32),
-          child: Text(
-            sinPermiso
-                ? 'GeoMaps no tiene permiso para usar la camara. Activalo en '
-                      'los ajustes del telefono para escanear el QR.'
-                : 'No se pudo abrir la camara.',
-            textAlign: TextAlign.center,
-            style: const TextStyle(color: Colors.white, fontSize: 15),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                sinPermiso
+                    ? 'GeoMaps no tiene permiso para usar la camara. Activalo '
+                          'en los ajustes del telefono para escanear el QR.'
+                    : 'No se pudo abrir la camara.',
+                textAlign: TextAlign.center,
+                style: const TextStyle(color: Colors.white, fontSize: 15),
+              ),
+              const SizedBox(height: 20),
+              // Una camara rota o un permiso negado no pueden dejar a un
+              // conductor sin trabajar: el QR solo lleva a la lista, y la
+              // lista la protege la cuenta, no el papel.
+              FilledButton.icon(
+                onPressed: () => Navigator.of(context).pushReplacement(
+                  MaterialPageRoute<void>(builder: (_) => const VueltasPage()),
+                ),
+                icon: const Icon(Icons.list_alt),
+                label: const Text('Ver las vueltas sin escanear'),
+              ),
+            ],
           ),
         ),
       ),

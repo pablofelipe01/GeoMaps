@@ -21,6 +21,7 @@ class Sitio {
   /// `B.7-P.3 · 7`: el rotulo completo que arma SiriusFleet.
   final String? codigo;
   final String? bloque;
+
   /// El numero del acopio dentro del bloque.
   final String? numero;
 
@@ -136,13 +137,60 @@ bool esQrDeVueltas(String leido) {
   return ruta.endsWith('/despacho/pendientes');
 }
 
+/// Como esta parada la cuenta para tomar una vuelta. Lo manda el backend con
+/// la lista, para que el dialogo de confirmar pida solo lo que falta.
+class Conductor {
+  const Conductor({this.cedula, this.nombre, this.pideClave = true});
+
+  factory Conductor.deJson(Map<String, dynamic> j) => Conductor(
+    cedula: j['cedula'] as String?,
+    nombre: j['nombre'] as String?,
+    pideClave: j['pide_clave'] as bool? ?? true,
+  );
+
+  /// La cedula atada a la cuenta. Nula hasta que confirma la primera vuelta.
+  final String? cedula;
+
+  /// Como figura en el registro de conductores de SiriusFleet.
+  final String? nombre;
+
+  /// Las cuentas de Google no tienen clave: confirman con la sesion.
+  final bool pideClave;
+
+  bool get tieneCedula => cedula != null && cedula!.isNotEmpty;
+
+  /// `***334`: alcanza para reconocerla sin dejarla entera a la vista de
+  /// quien mire la pantalla por encima del hombro.
+  String get cedulaOculta {
+    final c = cedula ?? '';
+    return c.length <= 3 ? c : '***${c.substring(c.length - 3)}';
+  }
+}
+
+/// La respuesta de la lista: las vueltas y quien las esta mirando.
+class ListaVueltas {
+  const ListaVueltas({required this.vueltas, this.conductor});
+
+  factory ListaVueltas.deJson(Map<String, dynamic> j) => ListaVueltas(
+    vueltas: [
+      for (final v in (j['vueltas'] as List).cast<Map<String, dynamic>>())
+        Vuelta.deJson(v),
+    ],
+    conductor: j['conductor'] == null
+        ? null
+        : Conductor.deJson(j['conductor'] as Map<String, dynamic>),
+  );
+
+  final List<Vuelta> vueltas;
+
+  /// Nulo si el backend no pudo leer la cuenta (o es uno viejo, que no lo
+  /// mandaba): el dialogo pide todo, como la primera vez.
+  final Conductor? conductor;
+}
+
 /// Las vueltas pendientes, recien pedidas. Se piden al abrir la lista y con
 /// "Actualizar"; no se guardan en el telefono, porque una lista vieja manda a
 /// un camion por una vuelta que ya recogio otro.
-final vueltasProvider = FutureProvider.autoDispose<List<Vuelta>>((ref) async {
-  final datos = await ref.watch(apiProvider).vueltasPendientes();
-  return [
-    for (final v in (datos['vueltas'] as List).cast<Map<String, dynamic>>())
-      Vuelta.deJson(v),
-  ];
+final vueltasProvider = FutureProvider.autoDispose<ListaVueltas>((ref) async {
+  return ListaVueltas.deJson(await ref.watch(apiProvider).vueltasPendientes());
 });

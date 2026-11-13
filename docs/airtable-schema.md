@@ -56,7 +56,7 @@ USUARIO -> PROYECTO -> MAPA (capa base offline)
 | `Foto` | URL | El avatar de Google, si lo hay. Vacio en las cuentas de clave |
 | `Rol` | Single select | `Usuario` / `Soporte` / `Admin`. Toda cuenta nueva nace `Usuario` |
 | `Estado` | Single select | `Activa` / `Suspendida` / `Baja pedida` |
-| `Perfiles` | Multiple select | `Plantacion` / `Camiones`. Que herramientas ve en la app. **Vacio = Plantacion**, asi las cuentas viejas no pierden nada. Se asigna a mano; llega al telefono la proxima vez que la persona entra |
+| `Perfiles` | Multiple select | `Plantacion` / `Camiones`. Que herramientas ve en la app. **Vacio = Plantacion**, asi las cuentas viejas no pierden nada. Se asigna a mano; llega al telefono la proxima vez que abre la app con senal (`POST /v1/sesion/renovar`), o al tocar "Actualizar mi cuenta". Ya no hace falta cerrar sesion |
 | `Cedula` | Single line text | Solo digitos. La del conductor en SiriusFleet (`operadores.documento`). **Se llena sola** la primera vez que confirma una vuelta y desde ahi queda atada: esa cuenta solo confirma con esa cedula y ninguna otra cuenta puede usarla. Para cambiarla se borra a mano |
 | `Espacio usado (MB)` | Number (1 decimal) | Suma de lo que ocupa en S3. Contra `CUOTA_MB_POR_USUARIO` |
 | `Registrado en` | Date with time | |
@@ -100,6 +100,26 @@ SiriusFleet (Supabase). GeoMaps solo la lee y, al confirmar, anota conductor y
 hora de salida alla (`backend/app/services/supabase.py`). Lo unico que queda en
 esta base es la `Cedula` atada a la cuenta y el viaje grabado, que sube como un
 `Trazado` con `Metodo = Automatico` y la vuelta en las propiedades del GeoJSON.
+
+**Que hace falta para que un conductor tome vueltas.** Tres cosas, y las tres
+se arreglan sin tocar codigo:
+
+1. La cuenta tiene `Camiones` en `Perfiles`. Sin eso la app ni muestra el
+   modulo y el backend responde 403.
+2. Su cedula esta en `operadores.documento` de SiriusFleet, con el conductor
+   activo. Es lo que queda anotado en la planilla; si no esta, la app lo dice
+   con todas las letras ("pedile a despacho que te agregue").
+3. La primera vuelta que toma le pide la cedula, y queda en `Cedula`. De ahi
+   en adelante no se vuelve a pedir.
+
+La clave se pide en cada vuelta a las cuentas que tienen una (`Proveedor =
+Correo`). **Las de Google no tienen clave y confirman con la sesion**: antes
+no podian confirmar nada, y como la unica cuenta con el perfil era de Google,
+la lista se veia y ninguna vuelta se dejaba tomar.
+
+Una vuelta tomada por error se devuelve desde la app ("No la voy a recoger"):
+el backend le borra conductor y hora de salida en la planilla, solo si la
+habia tomado ese mismo conductor, y vuelve a la lista.
 
 **`Perfiles` no es `Rol`.** El rol dice quien puede ver datos ajenos; el
 perfil dice que hace la persona en campo y por lo tanto que modulos ve. Viaja en
@@ -200,6 +220,9 @@ abre sin error, y nadie lo nota hasta que alguien camina al punto equivocado.
 | `Precision media (m)` | Number (1 decimal) | Que tan bueno era el GPS. Un poligono levantado bajo arboles con 30 m de error no sirve para un lindero |
 | `Metodo` | Single select | `Automatico` / `Manual` / `Mixto` / `Calculada`. `Calculada` es una ruta del ruteo por vias guardada desde el mapa: nadie la camino, no tiene `Precision media` y no sirve como lindero |
 | `Iniciado en` / `Terminado en` | Date with time | |
+| `Calificacion` | Number (entero) o Rating | De 1 a 5. Como califico la ruta quien la recorrio, al terminarla: una ruta iniciada desde el mapa o el viaje de un camion. Vacio si no se califico. **Hay que crear este campo y los dos de abajo a mano**: mientras no existan, el recorrido sube igual y la calificacion queda solo en el GeoJSON de S3 (`properties.calificacion`) |
+| `Motivos calificacion` | Single line text | Por que salio mal, separados por coma: `Via en mal estado`, `Barro o agua`, `Paso cerrado`, `Dio mucha vuelta`, `Mando por donde no era`. Solo se preguntan con 3 estrellas o menos |
+| `Comentario calificacion` | Long text | Lo que escribio la persona, si escribio algo |
 | `Capturado por` | Link -> Usuarios | |
 | `Archivos` | Link -> Archivos | Sus KML/GPX/PDF |
 | `Waypoints` | Link -> Waypoints | |

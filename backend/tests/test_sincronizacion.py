@@ -11,9 +11,10 @@ import re
 from typing import Any
 
 import pytest
+from fastapi import HTTPException
 
 from app.config import get_settings
-from app.schemas_sync import SyncRequest, TrazadoSync
+from app.schemas_sync import SyncRequest, TrazadoSync, WaypointSync
 from app.services import airtable, almacenamiento, sincronizacion
 from app.services.auth import Identidad
 
@@ -172,3 +173,187 @@ async def test_proyecto_ajeno_o_sin_subir_se_rechaza(base):
     r = await _sync(YO, _ruta(proyecto_codigo="proyecto-de-nadie"))
     assert not r.trazados[0].ok
     assert base.de("Trazados") == []
+
+
+# --- Puntos marcados -------------------------------------------------------
+
+
+def _punto(codigo: str = "punto-0001", **cambios) -> WaypointSync:
+    datos = {
+        "codigo": codigo,
+        "proyecto_codigo": "local",
+        "nombre": " Alcantarilla rota ",
+        "latitud": 4.4512345678,
+        "longitud": -72.9612345678,
+        "precision_m": 6.44,
+        "simbolo": "fuenteDeAgua",
+        "nota": "Revisar antes del invierno",
+        "marcado_en": "2026-11-12T14:00:00+00:00",
+    }
+    datos.update(cambios)
+    return WaypointSync(**datos)
+
+
+async def _sync_puntos(ident: Identidad, *puntos: WaypointSync, trazados=()):
+    return await sincronizacion.sincronizar(
+        get_settings(),
+        ident,
+        SyncRequest(trazados=list(trazados), waypoints=list(puntos)),
+    )
+
+
+async def test_sube_el_punto_con_las_opciones_de_airtable(base):
+    r = await _sync_puntos(YO, _punto())
+
+    assert r.waypoints[0].ok, r.waypoints[0].error
+    [fila] = base.de("Waypoints")
+    assert fila["Nombre"] == "Alcantarilla rota"
+    assert fila["Simbolo"] == "Fuente de agua", "el .name de Dart no llega crudo"
+    assert fila["Latitud"] == 4.451235
+    assert fila["Longitud"] == -72.961235
+    assert fila["Precision (m)"] == 6.4
+    assert "Altitud (m)" not in fila
+    assert "s3" not in base.orden, "un punto no tiene nada que mandar a S3"
+
+    [proyecto] = base.de("Proyectos")
+    assert proyecto["Codigo proyecto"] == "local-111"
+
+
+async def test_reintentar_el_punto_no_lo_duplica(base):
+    await _sync_puntos(YO, _punto())
+    await _sync_puntos(YO, _punto(nombre="Alcantarilla arreglada"))
+
+    [fila] = base.de("Waypoints")
+    assert fila["Nombre"] == "Alcantarilla arreglada"
+
+
+async def test_nadie_pisa_el_punto_de_otro(base):
+    await _sync_puntos(YO, _punto())
+    r = await _sync_puntos(OTRO, _punto(nombre="Pisado"))
+
+    assert not r.waypoints[0].ok
+    [fila] = base.de("Waypoints")
+    assert fila["Nombre"] == "Alcantarilla rota"
+
+
+async def test_el_punto_se_enlaza_al_recorrido_de_la_misma_tanda(base):
+    r = await _sync_puntos(
+        YO,
+        _punto(trazado_codigo="ruta-0001"),
+        trazados=[_ruta("ruta-0001", metodo="automatico")],
+    )
+
+    assert r.trazados[0].ok and r.waypoints[0].ok
+    [fila] = base.de("Waypoints")
+    [trazado_id] = base.tablas["Trazados"].keys()
+    assert fila["Trazado"] == [trazado_id]
+
+
+async def test_el_punto_no_se_cuelga_del_recorrido_de_otra_cuenta(base):
+    await _sync(OTRO, _ruta("ruta-ajena-1"))
+    r = await _sync_puntos(YO, _punto(trazado_codigo="ruta-ajena-1"))
+
+    assert r.waypoints[0].ok, "el punto es valido: solo queda sin enlace"
+    [fila] = base.de("Waypoints")
+    assert "Trazado" not in fila
+
+
+async def test_un_punto_malo_no_frena_a_los_demas(base, monkeypatch):
+    guardar = base.guardar
+
+    async def falla_en_uno(settings, tabla, campos, record_id):
+        if campos.get("Codigo waypoint") == "punto-malo":
+            raise RuntimeError("se cayo la red")
+        return await guardar(settings, tabla, campos, record_id)
+
+    monkeypatch.setattr(airtable, "guardar", falla_en_uno)
+    r = await _sync_puntos(YO, _punto("punto-malo"), _punto("punto-bueno"))
+
+    assert [w.ok for w in r.waypoints] == [False, True]
+    assert "Se reintenta" in r.waypoints[0].error
+    assert [f["Codigo waypoint"] for f in base.de("Waypoints")] == ["punto-bueno"]
+
+
+def test_un_punto_imposible_no_entra():
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError):
+        _punto(latitud=120.0)
+    with pytest.raises(ValidationError):
+        _punto(longitud=-272.96)
+    # El simbolo llega con el .name de Dart; la opcion de Airtable no vale.
+    with pytest.raises(ValidationError):
+        _punto(simbolo="Fuente de agua")
+
+
+# --- Calificacion de la ruta -------------------------------------------------
+
+
+async def test_la_calificacion_llega_a_la_fila(base):
+    r = await _sync(
+        YO,
+        _ruta(
+            metodo="automatico",
+            calificacion=2,
+            calificacion_motivos=["barro", "cerrada", "motivo_nuevo"],
+            calificacion_comentario="  El paso del cano esta cerrado  ",
+        ),
+    )
+
+    assert r.trazados[0].ok, r.trazados[0].error
+    [fila] = base.de("Trazados")
+    assert fila["Calificacion"] == 2
+    assert fila["Motivos calificacion"] == "Barro o agua, Paso cerrado, motivo_nuevo"
+    assert fila["Comentario calificacion"] == "El paso del cano esta cerrado"
+
+
+async def test_sin_calificar_no_se_escribe_nada_de_eso(base):
+    await _sync(YO, _ruta())
+    [fila] = base.de("Trazados")
+    assert "Calificacion" not in fila
+    assert "Motivos calificacion" not in fila
+
+
+async def test_si_la_base_no_tiene_los_campos_el_recorrido_sube_igual(base, monkeypatch):
+    """Una base donde todavia no se crearon los campos de calificacion."""
+    guardar = base.guardar
+
+    async def sin_esos_campos(settings, tabla, campos, record_id):
+        if "Calificacion" in campos:
+            raise HTTPException(
+                status_code=500,
+                detail="Airtable rechazo los campos de 'Trazados': "
+                '{"error":{"type":"UNKNOWN_FIELD_NAME","message":"Unknown field name: '
+                '\\"Calificacion\\""}}',
+            )
+        return await guardar(settings, tabla, campos, record_id)
+
+    monkeypatch.setattr(airtable, "guardar", sin_esos_campos)
+    r = await _sync(YO, _ruta(calificacion=5))
+
+    assert r.trazados[0].ok, r.trazados[0].error
+    [fila] = base.de("Trazados")
+    assert fila["Codigo trazado"] == "ruta-0001"
+    assert "Calificacion" not in fila
+
+
+async def test_otro_rechazo_de_airtable_no_se_traga(base, monkeypatch):
+    async def falla(settings, tabla, campos, record_id):
+        if tabla == "Trazados":
+            raise HTTPException(status_code=502, detail="Airtable respondio 503")
+        return await base.guardar(settings, tabla, campos, record_id)
+
+    monkeypatch.setattr(airtable, "guardar", falla)
+    r = await _sync(YO, _ruta(calificacion=4))
+
+    assert not r.trazados[0].ok
+    assert "503" in r.trazados[0].error
+
+
+def test_una_calificacion_fuera_de_rango_no_entra():
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError):
+        _ruta(calificacion=0)
+    with pytest.raises(ValidationError):
+        _ruta(calificacion=6)

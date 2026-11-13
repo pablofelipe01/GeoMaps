@@ -17,7 +17,11 @@ import '../core/parcelas.dart';
 import '../core/ruteo.dart';
 import '../core/ubicacion.dart';
 import '../core/vias.dart';
+import '../data/db/app_database.dart';
+import '../data/db/enums.dart';
+import '../state/captura.dart';
 import '../state/gps.dart';
+import '../state/grabacion.dart';
 import '../state/providers.dart';
 import '../state/sesion.dart';
 import '../state/sincronizador.dart';
@@ -28,8 +32,14 @@ import 'capa_pdf.dart';
 import 'capa_ruta.dart';
 import 'capa_vias.dart';
 import 'capas_panel.dart';
+import 'calificar_ruta.dart';
 import 'importar_mapa_page.dart';
+import 'medicion.dart';
+import 'panel_grabacion.dart';
+import 'proveedor_teselas.dart';
 import 'rutas_guardadas.dart';
+import 'trazado_page.dart';
+import 'waypoint_page.dart';
 
 /// La pantalla principal: el mapa.
 ///
@@ -84,6 +94,17 @@ class MapaPage extends ConsumerStatefulWidget {
   /// mapa para una tarea -el viaje que se esta grabando- sin que el mapa tenga
   /// que saber de que se trata.
   final Widget? panelSuperior;
+
+  /// Cambia el destino del mapa que contiene a [context] y traza la ruta
+  /// hasta el. Es para lo que va en [panelSuperior]: el viaje de un camion
+  /// tiene dos tramos -ir por los vagones, dejar el vacio- y pasar del uno al
+  /// otro no puede obligar a salir del mapa.
+  static void irA(BuildContext context, LatLng punto, {String? nombre}) {
+    context.findAncestorStateOfType<_MapaPageState>()?._fijarDestino(
+      punto,
+      nombre: nombre,
+    );
+  }
 
   @override
   ConsumerState<MapaPage> createState() => _MapaPageState();
@@ -172,6 +193,19 @@ class _MapaPageState extends ConsumerState<MapaPage>
   /// La pista de "manten pulsado" se muestra hasta que se usa una vez.
   bool _pistaVista = false;
 
+  /// Midiendo: cada toque en el mapa suma un punto a [_medida] en vez de
+  /// elegir lo que haya debajo del dedo.
+  bool _midiendo = false;
+  final List<LatLng> _medida = [];
+
+  /// El punto marcado que se toco, con su tarjeta abajo.
+  Waypoint? _punto;
+
+  /// El recorrido o el area guardados que se estan mirando, y sus vertices ya
+  /// convertidos: decodificar el GeoJSON en cada cuadro seria tirar trabajo.
+  Trazado? _visto;
+  List<LatLng> _vistoVertices = const [];
+
   /// El zoom manda sobre que rotulos se dibujan. Se guarda aca porque el mapa
   /// lo reporta por callback, no se puede leer en el build antes del primer
   /// cuadro.
@@ -191,6 +225,16 @@ class _MapaPageState extends ConsumerState<MapaPage>
       _destino = destino;
       _nombreDestino = widget.nombreDestinoInicial;
       _pistaVista = true;
+    } else {
+      // Se salio del mapa con una ruta iniciada y se volvio: el recorrido
+      // siguio grabando, asi que el mapa retoma hacia donde iba.
+      final g = ref.read(grabadorProvider);
+      final iba = g.destino;
+      if (_esNavegacion(g) && iba != null) {
+        _destino = LatLng(iba.latitud, iba.longitud);
+        _nombreDestino = g.destinoNombre;
+        _pistaVista = true;
+      }
     }
     _suscripcion = Gps.instancia.posiciones.listen(
       _alFix,
@@ -498,6 +542,11 @@ class _MapaPageState extends ConsumerState<MapaPage>
     setState(() => _progreso = progreso);
 
     if (progreso.llego) {
+      // Una ruta iniciada termina sola al llegar, y ahi se califica.
+      if (_esNavegacion(ref.read(grabadorProvider))) {
+        unawaited(_terminarRuta(llego: true));
+        return;
+      }
       final nombre = _nombreDestino;
       _quitarRuta();
       _avisar(
@@ -524,13 +573,35 @@ class _MapaPageState extends ConsumerState<MapaPage>
   /// Un toque simple: elige el acopio que quede debajo del dedo, o suelta el
   /// que estaba elegido si se toco en otro lado.
   void _alTocar(LatLng punto, AcopiosPredio? acopios) {
+    // Midiendo, el toque es un vertice y nada mas.
+    if (_midiendo) {
+      setState(() => _medida.add(punto));
+      return;
+    }
+
     // Con un destino marcado, tocar el mapa no cambia nada: la tarjeta de la
     // ruta manda. Un roce mientras se maneja no puede mover el resaltado a otro
     // acopio que no es a donde lleva la ruta. Se cierra la ruta y se elige.
     if (_destino != null) return;
 
+    // Un punto marcado gana sobre el acopio de al lado: lo puso la persona, y
+    // si lo toca es porque lo esta buscando.
+    final marcado = puntoCercano(
+      puntos: ref.read(puntosProvider).valueOrNull ?? const [],
+      camara: _mapa.camera,
+      toque: _mapa.camera.latLngToScreenOffset(punto),
+    );
+    if (marcado != null) {
+      setState(() {
+        _punto = marcado;
+        _acopio = null;
+      });
+      return;
+    }
+    if (_punto != null) setState(() => _punto = null);
+    if (acopios == null) return;
+
     final visibles =
-        acopios != null &&
         _visibles.contains(CapaPredio.acopios) &&
         _zoom >= CapaAcopios.zoomMinimo;
     final tocado = visibles
@@ -575,6 +646,284 @@ class _MapaPageState extends ConsumerState<MapaPage>
     // apagados, porque si no el resaltado aparece solo, sin sus vecinos.
     _visibles.add(CapaPredio.acopios);
     _mostrarAcopio(elegido);
+  }
+
+  // ------------------------- Iniciar y calificar -------------------------
+
+  /// Si lo que se esta grabando es una ruta iniciada desde el mapa, y no un
+  /// recorrido libre ni el viaje de un camion.
+  static bool _esNavegacion(EstadoGrabacion g) =>
+      g.grabando && g.propiedades['tipo'] == 'navegacion';
+
+  /// Mientras se muestra el dialogo de calificar no se vuelve a abrir: los
+  /// fixes siguen llegando y cada uno diria otra vez "llegaste".
+  bool _calificando = false;
+
+  /// Inicia la ruta que se esta mostrando: desde aca se graba por donde se va
+  /// de verdad, y al llegar -o al terminarla antes- se pregunta que tal
+  /// estuvo. Lo que se califica es ese recorrido, no la linea azul.
+  Future<void> _iniciarRuta() async {
+    final ruta = _ruta;
+    final destino = _destino;
+    if (ruta == null || destino == null) return;
+
+    await ref
+        .read(grabadorProvider.notifier)
+        .iniciar(
+          nombre: 'Ruta a ${_nombreDestino ?? 'punto marcado'}',
+          destino: PuntoGeo(destino.latitude, destino.longitude),
+          destinoNombre: _nombreDestino,
+          propiedades: {
+            'tipo': 'navegacion',
+            // Lo que la app prometio, para comparar con lo que se hizo.
+            'ruta_sugerida_m': ruta.metrosTotales.round(),
+            'ruta_sugerida_min': ruta.minutos.round(),
+          },
+        );
+    if (!mounted) return;
+    if (!ref.read(grabadorProvider).grabando) {
+      _avisar('No se pudo iniciar la ruta.');
+      return;
+    }
+    setState(() => _modo = _Seguimiento.rumbo);
+    _seguir();
+    _avisar('Ruta iniciada. Al llegar te pregunto que tal estuvo.');
+  }
+
+  /// Termina la ruta iniciada y pide la calificacion.
+  Future<void> _terminarRuta({required bool llego}) async {
+    if (_calificando) return;
+    _calificando = true;
+    try {
+      _quitarRuta();
+      await terminarRutaCalificando(context, ref, llego: llego);
+    } finally {
+      _calificando = false;
+    }
+  }
+
+  // ------------------------------ Medir ------------------------------
+
+  void _empezarAMedir() {
+    setState(() {
+      _midiendo = true;
+      _medida.clear();
+      _acopio = null;
+      _punto = null;
+      _pistaVista = true;
+      // Medir es mirar un lugar, no seguirse a uno mismo: si la camara sigue
+      // a la flecha, el lote que se esta marcando se va de la pantalla.
+      _modo = _Seguimiento.libre;
+    });
+  }
+
+  void _dejarDeMedir() {
+    setState(() {
+      _midiendo = false;
+      _medida.clear();
+    });
+  }
+
+  /// Guarda lo medido como un area, con el nombre que se elija. Queda en "Lo
+  /// que levante" y sube sola cuando haya senal.
+  Future<void> _guardarArea() async {
+    final usuario = ref.read(sesionProvider).sesion?.codigoUsuario;
+    if (usuario == null || usuario.isEmpty || _medida.length < 3) return;
+    final medida = Medicion(List.of(_medida));
+
+    final nombre = await pedirNombreRuta(
+      context,
+      'Area de ${medida.areaTexto}',
+      titulo: 'Guardar area',
+    );
+    if (nombre == null || !mounted) return;
+
+    final Trazado guardado;
+    try {
+      guardado = await ref
+          .read(trazadosRepositoryProvider)
+          .guardarPoligono(
+            usuarioCodigo: usuario,
+            nombre: nombre,
+            vertices: [
+              for (final p in medida.puntos) PuntoGeo(p.latitude, p.longitude),
+            ],
+          );
+    } catch (_) {
+      _avisar('No se pudo guardar el area en el telefono.');
+      return;
+    }
+    if (!mounted) return;
+    _dejarDeMedir();
+    _verTrazado(guardado, encuadrar: false);
+    _avisar('Area guardada. Sube a la base cuando haya senal.');
+    unawaited(ref.read(sincronizadorProvider.notifier).sincronizar());
+  }
+
+  // ------------------------- Puntos y recorridos -------------------------
+
+  /// Marca un punto donde se esta parado, con la precision que da el GPS en
+  /// ese momento. Si se esta grabando un recorrido, el punto queda atado a el
+  /// y sale en el mismo archivo al compartirlo.
+  Future<void> _marcarAqui() async {
+    final p = _posicion;
+    if (p == null || Ubicacion.esDeCache(p)) {
+      _avisar(
+        'Todavia no hay senal de GPS para marcar donde estas. Sali a cielo '
+        'abierto, o manten pulsado el mapa para marcar un punto a mano.',
+      );
+      return;
+    }
+    final guardado = await marcarPunto(
+      context,
+      ref,
+      punto: LatLng(p.latitude, p.longitude),
+      precisionM: p.accuracy,
+      altitudM: p.altitude == 0 ? null : p.altitude,
+      trazadoCodigo: ref.read(grabadorProvider).codigo,
+    );
+    if (guardado != null) _avisar('Punto "${guardado.nombre}" guardado.');
+  }
+
+  /// Marca un punto elegido con el dedo. Queda dicho que no tiene GPS.
+  Future<void> _marcarEn(LatLng punto) async {
+    final guardado = await marcarPunto(context, ref, punto: punto);
+    if (guardado == null || !mounted) return;
+    setState(() => _punto = guardado);
+  }
+
+  Future<void> _borrarPunto(Waypoint w) async {
+    await ref.read(waypointsRepositoryProvider).borrar(w.codigo);
+    if (mounted) setState(() => _punto = null);
+  }
+
+  /// Muestra un recorrido o un area guardados, y encuadra el mapa en el.
+  void _verTrazado(Trazado t, {bool encuadrar = true}) {
+    final vertices = verticesDe(t);
+    setState(() {
+      _visto = t;
+      _vistoVertices = vertices;
+      _punto = null;
+      _acopio = null;
+      _modo = _Seguimiento.libre;
+    });
+    if (!encuadrar || !_mapaListo || vertices.isEmpty) return;
+    _mapa.fitCamera(
+      CameraFit.coordinates(
+        coordinates: vertices,
+        maxZoom: 18,
+        // Arriba la barra del GPS y abajo la tarjeta: el trazado tiene que
+        // quedar en lo que se ve, no debajo de ellas.
+        padding: const EdgeInsets.fromLTRB(48, 150, 48, 190),
+      ),
+    );
+  }
+
+  /// La lista de lo levantado: se elige algo y se lo ve en el mapa.
+  Future<void> _abrirLevantados() async {
+    final elegido = await elegirLevantado(context);
+    if (elegido == null || !mounted) return;
+    if (_destino != null) _quitarRuta();
+    final trazado = elegido.trazado;
+    final punto = elegido.punto;
+    if (trazado != null) {
+      _verTrazado(trazado);
+    } else if (punto != null) {
+      setState(() {
+        _punto = punto;
+        _acopio = null;
+        _modo = _Seguimiento.libre;
+      });
+      if (_mapaListo) {
+        _mapa.move(
+          LatLng(punto.latitud, punto.longitud),
+          math.max(_mapa.camera.zoom, 17),
+        );
+      }
+    }
+  }
+
+  /// El menu de herramientas. Un solo boton para todas: con uno por
+  /// herramienta la columna de botones tapaba medio costado del mapa.
+  void _abrirHerramientas() {
+    final g = ref.read(grabadorProvider);
+    showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      isScrollControlled: true,
+      builder: (hoja) {
+        void hacer(VoidCallback accion) {
+          Navigator.pop(hoja);
+          accion();
+        }
+
+        return SafeArea(
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                // Con un viaje de camion en curso la grabacion es del viaje:
+                // se termina desde su franja, no desde aca.
+                if (g.codigo == null)
+                  ListTile(
+                    leading: const Icon(
+                      Icons.fiber_manual_record,
+                      color: Colors.red,
+                    ),
+                    title: const Text('Grabar recorrido'),
+                    subtitle: const Text(
+                      'Por donde camines o manejes, tambien con la pantalla '
+                      'apagada',
+                    ),
+                    onTap: () => hacer(() => iniciarRecorrido(context, ref)),
+                  )
+                else if (widget.panelSuperior == null)
+                  ListTile(
+                    leading: const Icon(Icons.stop_circle_outlined),
+                    title: const Text('Terminar el recorrido'),
+                    subtitle: Text(g.nombre ?? ''),
+                    onTap: () => hacer(() => terminarRecorrido(context, ref)),
+                  ),
+                ListTile(
+                  leading: const Icon(Icons.add_location_alt_outlined),
+                  title: const Text('Marcar un punto aqui'),
+                  subtitle: const Text(
+                    'Donde estas parado, con la precision del GPS',
+                  ),
+                  onTap: () => hacer(_marcarAqui),
+                ),
+                ListTile(
+                  leading: const Icon(Icons.straighten),
+                  title: const Text('Medir distancia o area'),
+                  subtitle: const Text('Tocando puntos sobre el mapa'),
+                  onTap: () => hacer(_empezarAMedir),
+                ),
+                ListTile(
+                  leading: const Icon(Icons.folder_special_outlined),
+                  title: const Text('Lo que levante'),
+                  subtitle: const Text(
+                    'Recorridos, areas y puntos. Para verlos y compartirlos',
+                  ),
+                  onTap: () => hacer(_abrirLevantados),
+                ),
+                if (widget.archivoVias != null)
+                  ListTile(
+                    leading: const Icon(Icons.bookmarks_outlined),
+                    title: const Text('Rutas guardadas'),
+                    onTap: () => hacer(_abrirRutasGuardadas),
+                  ),
+                const Divider(height: 1),
+                ListTile(
+                  leading: const Icon(Icons.account_circle_outlined),
+                  title: const Text('Mi cuenta'),
+                  onTap: () => hacer(() => _mostrarCuenta(context)),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
   }
 
   /// El panel de capas, que sube desde abajo sobre el mapa.
@@ -681,236 +1030,366 @@ class _MapaPageState extends ConsumerState<MapaPage>
     final verAcopios =
         acopios != null && _visibles.contains(CapaPredio.acopios);
 
+    // Lo que se levanto: la grabacion en curso y los puntos marcados.
+    final grabacion = ref.watch(grabadorProvider);
+    final puntos = ref.watch(puntosProvider).valueOrNull ?? const <Waypoint>[];
+
+    // Una sola tarjeta abajo a la vez, en este orden de quien manda: medir es
+    // un modo y tapa todo; despues la ruta; despues lo que se haya tocado.
+    final hayRuta = !_midiendo && (_ruta != null || _calculando);
+
     // La tarjeta del acopio elegido se muestra mientras no haya ruta: en
     // cuanto se pide la ruta, la tarjeta de la ruta toma su lugar.
-    final fichaAcopio = _acopio != null && _destino == null;
+    final fichaAcopio = !_midiendo && _acopio != null && _destino == null;
+    final fichaPunto = !_midiendo && !hayRuta && !fichaAcopio && _punto != null;
+    final fichaTrazado =
+        !_midiendo && !hayRuta && !fichaAcopio && !fichaPunto && _visto != null;
 
     // Cuando hay una tarjeta abajo ocupa lugar: los botones suben para no
     // quedar debajo de ella.
-    final hayPanel = _ruta != null || _calculando || fichaAcopio;
-    final abajo = hayPanel ? 116.0 : 32.0;
+    // Si la ruta que se sigue ya se inicio. Y si se puede iniciar: con otro
+    // recorrido grabandose -el viaje de un camion- la ruta es parte de el.
+    final enRuta = _esNavegacion(grabacion);
+    final conBoton = _ruta != null && (enRuta || grabacion.codigo == null);
 
-    return Scaffold(
-      body: Stack(
-        children: [
-          FlutterMap(
-            mapController: _mapa,
-            options: MapOptions(
-              // Guaicaramo, mientras no haya un fix. Abrir en el Atlantico
-              // (0,0) haria creer que el GPS fallo.
-              initialCenter: aqui ?? const LatLng(4.28, -72.89),
-              initialZoom: 17,
-              onMapReady: () {
-                _mapaListo = true;
-                _seguir();
-              },
-              // El ruteo solo existe donde hay vias cargadas: sin el plano
-              // del predio no hay por donde trazar nada.
-              onLongPress: widget.archivoVias == null
-                  ? null
-                  : (_, punto) => _fijarDestino(punto),
-              onTap: acopios == null
-                  ? null
-                  : (_, punto) => _alTocar(punto, acopios),
-              onPositionChanged: (camara, porGesto) {
-                // Esto llega en cada cuadro mientras alguien mueve el mapa.
-                // Arrastrar no cambia nada de lo que se dibuja -el zoom es lo
-                // que decide los rotulos-, asi que reconstruir la pantalla por
-                // cada cuadro de arrastre era trabajo puro sin resultado.
-                final soltoElSeguimiento = porGesto && _siguiendo;
-                if (!soltoElSeguimiento && (camara.zoom - _zoom).abs() < 0.01) {
-                  return;
-                }
-                setState(() {
-                  _zoom = camara.zoom;
-                  if (soltoElSeguimiento) _modo = _Seguimiento.libre;
-                });
-              },
-            ),
-            children: [
-              TileLayer(
-                urlTemplate: _capa.url,
-                userAgentPackageName: _capa.paquete,
-                maxNativeZoom: _capa.zoomMax,
-                // Pide tambien el anillo de teselas alrededor de lo que se ve:
-                // con red, eso queda en la cache y el borde del mapa no sale
-                // en blanco despues al moverse sin senal.
-                panBuffer: 1,
+    final abajo = _midiendo || fichaPunto
+        ? 156.0
+        : hayRuta
+        ? (conBoton ? 172.0 : 116.0)
+        : (fichaAcopio || fichaTrazado ? 116.0 : 32.0);
+
+    return PopScope(
+      // Atras, midiendo, deja de medir: no saca del mapa con media area hecha.
+      canPop: !_midiendo,
+      onPopInvokedWithResult: (salio, _) {
+        if (!salio) _dejarDeMedir();
+      },
+      child: Scaffold(
+        body: Stack(
+          children: [
+            FlutterMap(
+              mapController: _mapa,
+              options: MapOptions(
+                // Guaicaramo, mientras no haya un fix. Abrir en el Atlantico
+                // (0,0) haria creer que el GPS fallo.
+                initialCenter: aqui ?? const LatLng(4.28, -72.89),
+                initialZoom: 17,
+                onMapReady: () {
+                  _mapaListo = true;
+                  _seguir();
+                },
+                // Mantener pulsado, donde hay vias, traza la ruta hasta ahi: sin
+                // el plano del predio no hay por donde trazar nada, y ahi el
+                // mismo gesto marca un punto a mano.
+                onLongPress: _midiendo
+                    ? null
+                    : (_, punto) => widget.archivoVias == null
+                          ? _marcarEn(punto)
+                          : _fijarDestino(punto),
+                onTap: (_, punto) => _alTocar(punto, acopios),
+                onPositionChanged: (camara, porGesto) {
+                  // Esto llega en cada cuadro mientras alguien mueve el mapa.
+                  // Arrastrar no cambia nada de lo que se dibuja -el zoom es lo
+                  // que decide los rotulos-, asi que reconstruir la pantalla por
+                  // cada cuadro de arrastre era trabajo puro sin resultado.
+                  final soltoElSeguimiento = porGesto && _siguiendo;
+                  if (!soltoElSeguimiento &&
+                      (camara.zoom - _zoom).abs() < 0.01) {
+                    return;
+                  }
+                  setState(() {
+                    _zoom = camara.zoom;
+                    if (soltoElSeguimiento) _modo = _Seguimiento.libre;
+                  });
+                },
               ),
-
-              // Orden de abajo hacia arriba: imagen, lotes, vias, posicion.
-              // Los linderos van primero porque son areas; una via encima de
-              // un lindero se ve, un lindero encima de una via lo borra.
-              // Los planos importados van sobre el satelital y **debajo** de
-              // los lotes y las vias: el plano es contexto, y los linderos
-              // que la app conoce de verdad no los puede tapar una hoja.
-              if (_verPlanos && planos.isNotEmpty) CapaPdf(planos: planos),
-
-              if (verParcelas) CapaParcelas(parcelas: parcelas, zoom: _zoom),
-
-              // Las vias van sobre la imagen y debajo del punto propio: saber
-              // donde estoy no lo puede tapar una linea.
-              if (verVias) CapaVias(vias: vias),
-
-              if (verParcelas) RotulosBloque(parcelas: parcelas, zoom: _zoom),
-
-              // La ruta va sobre las vias y debajo del punto propio.
-              if (_ruta != null) CapaRuta(ruta: _ruta!, progreso: _progreso),
-
-              // Los acopios van sobre la ruta: la ruta termina en uno, y el
-              // acopio tiene que seguir viendose debajo del alfiler.
-              if (verAcopios)
-                CapaAcopios(
-                  acopios: acopios,
-                  zoom: _zoom,
-                  seleccionado: _acopio,
+              children: [
+                TileLayer(
+                  urlTemplate: _capa.url,
+                  userAgentPackageName: _capa.paquete,
+                  maxNativeZoom: _capa.zoomMax,
+                  // Donde el servidor no tiene imagen del nivel pedido -o no
+                  // hay senal y no esta guardada-, muestra la del nivel de
+                  // arriba ampliada en vez del cartel o el hueco.
+                  tileProvider: proveedorDe(
+                    plantilla: _capa.url,
+                    paquete: _capa.paquete,
+                  ),
+                  // Pide tambien el anillo de teselas alrededor de lo que se ve:
+                  // con red, eso queda en la cache y el borde del mapa no sale
+                  // en blanco despues al moverse sin senal.
+                  panBuffer: 1,
                 ),
-              if (_destino != null) MarcadorDestino(destino: _destino!),
 
-              if (aqui != null) ...[
-                // El circulo de precision va SIEMPRE, debajo del punto.
-                CircleLayer(
-                  circles: [
-                    CircleMarker(
-                      point: aqui,
-                      radius: _posicion!.accuracy,
-                      useRadiusInMeter: true,
-                      color: Colors.blue.withValues(alpha: 0.15),
-                      borderColor: Colors.blue.withValues(alpha: 0.4),
-                      borderStrokeWidth: 1,
-                    ),
-                  ],
-                ),
-                MarkerLayer(
-                  markers: [
-                    Marker(
-                      point: aqui,
-                      // Mas grande que el circulo viejo: la flecha necesita
-                      // largo para que la punta se lea como punta.
-                      width: 34,
-                      height: 34,
-                      child: _PuntoPropio(rumbo: _rumbo),
-                    ),
-                  ],
+                // Orden de abajo hacia arriba: imagen, lotes, vias, posicion.
+                // Los linderos van primero porque son areas; una via encima de
+                // un lindero se ve, un lindero encima de una via lo borra.
+                // Los planos importados van sobre el satelital y **debajo** de
+                // los lotes y las vias: el plano es contexto, y los linderos
+                // que la app conoce de verdad no los puede tapar una hoja.
+                if (_verPlanos && planos.isNotEmpty) CapaPdf(planos: planos),
+
+                if (verParcelas) CapaParcelas(parcelas: parcelas, zoom: _zoom),
+
+                // Las vias van sobre la imagen y debajo del punto propio: saber
+                // donde estoy no lo puede tapar una linea.
+                if (verVias) CapaVias(vias: vias),
+
+                if (verParcelas) RotulosBloque(parcelas: parcelas, zoom: _zoom),
+
+                // El recorrido o el area que se esta mirando: debajo de la ruta
+                // y de lo que se graba ahora, que son lo vivo.
+                if (_visto != null)
+                  CapaTrazadoVisto(
+                    vertices: _vistoVertices,
+                    esArea: _visto!.tipo == TipoTrazado.poligono.name,
+                  ),
+
+                // La ruta va sobre las vias y debajo del punto propio.
+                if (_ruta != null) CapaRuta(ruta: _ruta!, progreso: _progreso),
+
+                // Por donde se vino, mientras se graba.
+                if (grabacion.codigo != null)
+                  CapaRecorrido(linea: grabacion.linea),
+
+                // Los acopios van sobre la ruta: la ruta termina en uno, y el
+                // acopio tiene que seguir viendose debajo del alfiler.
+                if (verAcopios)
+                  CapaAcopios(
+                    acopios: acopios,
+                    zoom: _zoom,
+                    seleccionado: _acopio,
+                  ),
+                if (_destino != null) MarcadorDestino(destino: _destino!),
+
+                if (puntos.isNotEmpty)
+                  CapaPuntos(puntos: puntos, seleccionado: _punto),
+                if (_midiendo) CapaMedicion(puntos: List.of(_medida)),
+
+                if (aqui != null) ...[
+                  // El circulo de precision va SIEMPRE, debajo del punto.
+                  CircleLayer(
+                    circles: [
+                      CircleMarker(
+                        point: aqui,
+                        radius: _posicion!.accuracy,
+                        useRadiusInMeter: true,
+                        color: Colors.blue.withValues(alpha: 0.15),
+                        borderColor: Colors.blue.withValues(alpha: 0.4),
+                        borderStrokeWidth: 1,
+                      ),
+                    ],
+                  ),
+                  MarkerLayer(
+                    markers: [
+                      Marker(
+                        point: aqui,
+                        // Mas grande que el circulo viejo: la flecha necesita
+                        // largo para que la punta se lea como punta.
+                        width: 34,
+                        height: 34,
+                        child: _PuntoPropio(rumbo: _rumbo),
+                      ),
+                    ],
+                  ),
+                ],
+
+                // La escala: sobre una imagen satelital no hay nada que diga si
+                // ese lote mide cien metros o un kilometro.
+                Scalebar(
+                  alignment: Alignment.bottomLeft,
+                  padding: EdgeInsets.only(left: 14, bottom: abajo + 22),
+                  lineColor: Colors.white,
+                  strokeWidth: 2.5,
+                  textStyle: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                    shadows: [Shadow(blurRadius: 4, color: Colors.black)],
+                  ),
                 ),
               ],
-            ],
-          ),
-          _BarraEstado(posicion: _posicion, error: _error),
+            ),
+            _BarraEstado(posicion: _posicion, error: _error),
 
-          if (widget.panelSuperior != null)
+            // De quien es la imagen. Lo piden los dos servidores para usarla.
+            Positioned(
+              left: 14,
+              bottom: abajo + 2,
+              child: IgnorePointer(
+                child: Text(
+                  _capa.atribucion,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 10.5,
+                    shadows: [Shadow(blurRadius: 3, color: Colors.black)],
+                  ),
+                ),
+              ),
+            ),
+
+            // Lo que va arriba: el viaje del camion si lo abrio el modulo de
+            // camiones, y si no, la grabacion en curso.
             Positioned(
               top: MediaQuery.of(context).padding.top + 64,
               left: 12,
               right: 12,
-              child: widget.panelSuperior!,
+              // Con una ruta iniciada la tarjeta de abajo ya dice que se
+              // graba y desde ella se termina: dos franjas dirian lo mismo.
+              child:
+                  widget.panelSuperior ??
+                  (enRuta ? const SizedBox.shrink() : const PanelGrabacion()),
             ),
 
-          // La pista de como se pide una ruta, arriba y no abajo: abajo pelea
-          // con la leyenda y los botones, y ahi nadie la lee.
-          if (widget.archivoVias != null && !_pistaVista)
+            // La pista de como se pide una ruta, arriba y no abajo: abajo pelea
+            // con la leyenda y los botones, y ahi nadie la lee.
+            if (widget.archivoVias != null &&
+                !_pistaVista &&
+                grabacion.codigo == null)
+              Positioned(
+                top: MediaQuery.of(context).padding.top + 70,
+                left: 0,
+                right: 0,
+                child: Center(child: PistaRuta(conAcopios: acopios != null)),
+              ),
+
             Positioned(
-              top: MediaQuery.of(context).padding.top + 70,
-              left: 0,
-              right: 0,
-              child: Center(child: PistaRuta(conAcopios: acopios != null)),
-            ),
-
-          Positioned(
-            right: 16,
-            bottom: abajo,
-            child: Column(
-              children: [
-                FloatingActionButton.small(
-                  heroTag: 'cuenta',
-                  onPressed: () => _mostrarCuenta(context),
-                  tooltip: 'Mi cuenta',
-                  child: const Icon(Icons.account_circle_outlined),
-                ),
-                if (widget.archivoVias != null) ...[
-                  const SizedBox(height: 12),
+              right: 16,
+              bottom: abajo,
+              child: Column(
+                children: [
                   FloatingActionButton.small(
-                    heroTag: 'rutas',
-                    onPressed: _abrirRutasGuardadas,
-                    tooltip: 'Rutas guardadas',
-                    child: const Icon(Icons.bookmarks_outlined),
+                    heroTag: 'herramientas',
+                    onPressed: _abrirHerramientas,
+                    tooltip: 'Herramientas',
+                    child: const Icon(Icons.construction),
+                  ),
+                  if (acopios != null) ...[
+                    const SizedBox(height: 12),
+                    FloatingActionButton.small(
+                      heroTag: 'buscar',
+                      onPressed: () => _buscarAcopio(acopios),
+                      tooltip: 'Buscar un acopio',
+                      child: const Icon(Icons.search),
+                    ),
+                  ],
+                  const SizedBox(height: 12),
+                  // Un solo boton para todas las capas. Un boton por capa ya
+                  // eran cinco y tapaban el costado del mapa; con cada capa
+                  // nueva iba a ser uno mas.
+                  FloatingActionButton.small(
+                    heroTag: 'capas',
+                    onPressed: () => _abrirCapas(
+                      planos: planos.length,
+                      parcelas: parcelas,
+                      vias: vias,
+                      acopios: acopios,
+                    ),
+                    tooltip: 'Capas',
+                    child: const Icon(Icons.layers_outlined),
+                  ),
+                  const SizedBox(height: 12),
+                  FloatingActionButton(
+                    heroTag: 'centrar',
+                    onPressed: aqui == null ? null : _alternarSeguimiento,
+                    tooltip: switch (_modo) {
+                      _Seguimiento.libre => 'Seguir mi posicion',
+                      _Seguimiento.rumbo => 'Norte arriba',
+                      _Seguimiento.centrado => 'Girar hacia donde voy',
+                    },
+                    child: Icon(switch (_modo) {
+                      _Seguimiento.libre => Icons.location_searching,
+                      _Seguimiento.rumbo => Icons.navigation,
+                      _Seguimiento.centrado => Icons.my_location,
+                    }),
                   ),
                 ],
-                if (acopios != null) ...[
-                  const SizedBox(height: 12),
-                  FloatingActionButton.small(
-                    heroTag: 'buscar',
-                    onPressed: () => _buscarAcopio(acopios),
-                    tooltip: 'Buscar un acopio',
-                    child: const Icon(Icons.search),
-                  ),
-                ],
-                const SizedBox(height: 12),
-                // Un solo boton para todas las capas. Un boton por capa ya
-                // eran cinco y tapaban el costado del mapa; con cada capa
-                // nueva iba a ser uno mas.
-                FloatingActionButton.small(
-                  heroTag: 'capas',
-                  onPressed: () => _abrirCapas(
-                    planos: planos.length,
-                    parcelas: parcelas,
-                    vias: vias,
-                    acopios: acopios,
-                  ),
-                  tooltip: 'Capas',
-                  child: const Icon(Icons.layers_outlined),
-                ),
-                const SizedBox(height: 12),
-                FloatingActionButton(
-                  heroTag: 'centrar',
-                  onPressed: aqui == null ? null : _alternarSeguimiento,
-                  tooltip: switch (_modo) {
-                    _Seguimiento.libre => 'Seguir mi posicion',
-                    _Seguimiento.rumbo => 'Norte arriba',
-                    _Seguimiento.centrado => 'Girar hacia donde voy',
-                  },
-                  child: Icon(switch (_modo) {
-                    _Seguimiento.libre => Icons.location_searching,
-                    _Seguimiento.rumbo => Icons.navigation,
-                    _Seguimiento.centrado => Icons.my_location,
-                  }),
-                ),
-              ],
-            ),
-          ),
-          if (_ruta != null)
-            Align(
-              alignment: Alignment.bottomCenter,
-              child: SafeArea(
-                child: PanelRuta(
-                  ruta: _ruta!,
-                  progreso: _progreso,
-                  calculando: _calculando,
-                  nombreDestino: _nombreDestino,
-                  onCerrar: _quitarRuta,
-                  onGuardar: _calculando ? null : _guardarRuta,
-                  guardada: _rutaGuardada,
-                ),
-              ),
-            )
-          else if (_calculando)
-            const Align(
-              alignment: Alignment.bottomCenter,
-              child: SafeArea(child: _CalculandoRuta()),
-            )
-          else if (fichaAcopio)
-            Align(
-              alignment: Alignment.bottomCenter,
-              child: SafeArea(
-                child: FichaAcopio(
-                  acopio: _acopio!,
-                  desde: aqui,
-                  onIr: () => _irAlAcopio(_acopio!),
-                  onCerrar: () => setState(() => _acopio = null),
-                ),
               ),
             ),
-        ],
+            if (_midiendo)
+              Align(
+                alignment: Alignment.bottomCenter,
+                child: SafeArea(
+                  child: PanelMedicion(
+                    puntos: List.of(_medida),
+                    onDeshacer: () => setState(_medida.removeLast),
+                    onCerrar: _dejarDeMedir,
+                    onGuardar: _guardarArea,
+                  ),
+                ),
+              )
+            else if (_ruta != null)
+              Align(
+                alignment: Alignment.bottomCenter,
+                child: SafeArea(
+                  child: PanelRuta(
+                    ruta: _ruta!,
+                    progreso: _progreso,
+                    calculando: _calculando,
+                    nombreDestino: _nombreDestino,
+                    // Cerrar una ruta iniciada es terminarla: lo grabado no
+                    // se tira, y se pregunta por ella igual.
+                    onCerrar: enRuta
+                        ? () => _terminarRuta(llego: false)
+                        : _quitarRuta,
+                    onGuardar: _calculando ? null : _guardarRuta,
+                    guardada: _rutaGuardada,
+                    enRuta: enRuta,
+                    onIniciar: grabacion.codigo == null ? _iniciarRuta : null,
+                    onTerminar: () => _terminarRuta(llego: false),
+                  ),
+                ),
+              )
+            else if (_calculando)
+              const Align(
+                alignment: Alignment.bottomCenter,
+                child: SafeArea(child: _CalculandoRuta()),
+              )
+            else if (fichaAcopio)
+              Align(
+                alignment: Alignment.bottomCenter,
+                child: SafeArea(
+                  child: FichaAcopio(
+                    acopio: _acopio!,
+                    desde: aqui,
+                    onIr: () => _irAlAcopio(_acopio!),
+                    onCerrar: () => setState(() => _acopio = null),
+                  ),
+                ),
+              )
+            else if (fichaPunto)
+              Align(
+                alignment: Alignment.bottomCenter,
+                child: SafeArea(
+                  child: FichaPunto(
+                    punto: _punto!,
+                    desde: aqui,
+                    onCerrar: () => setState(() => _punto = null),
+                    onBorrar: () => _borrarPunto(_punto!),
+                    onIr: widget.archivoVias == null
+                        ? null
+                        : () => _fijarDestino(
+                            LatLng(_punto!.latitud, _punto!.longitud),
+                            nombre: _punto!.nombre,
+                          ),
+                  ),
+                ),
+              )
+            else if (fichaTrazado)
+              Align(
+                alignment: Alignment.bottomCenter,
+                child: SafeArea(
+                  child: FichaTrazado(
+                    trazado: _visto!,
+                    onCerrar: () => setState(() {
+                      _visto = null;
+                      _vistoVertices = const [];
+                    }),
+                  ),
+                ),
+              ),
+          ],
+        ),
       ),
     );
   }
@@ -976,20 +1455,31 @@ enum CapaBase {
     // Esri no sirve teselas nativas mas alla de z19 en zona rural. Sin este
     // tope, acercarse mas deja la pantalla en gris en vez de escalar la ultima.
     19,
+    'Esri, Maxar, Earthstar Geographics',
   ),
   calles(
     'Calles',
     Icons.map_outlined,
     'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
     19,
+    '(c) OpenStreetMap',
   );
 
-  const CapaBase(this.titulo, this.icono, this.url, this.zoomMax);
+  const CapaBase(
+    this.titulo,
+    this.icono,
+    this.url,
+    this.zoomMax,
+    this.atribucion,
+  );
 
   final String titulo;
   final IconData icono;
   final String url;
   final int zoomMax;
+
+  /// De quien es la imagen. Los dos servidores piden mostrarlo para usarla.
+  final String atribucion;
 
   CapaBase get otra => this == satelite ? calles : satelite;
 

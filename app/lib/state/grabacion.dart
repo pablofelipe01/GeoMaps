@@ -22,6 +22,8 @@ class EstadoGrabacion {
     this.inicio,
     this.destino,
     this.destinoNombre,
+    this.propiedades = const {},
+    this.linea = const [],
     this.abiertaSinGrabar = false,
   });
 
@@ -38,6 +40,17 @@ class EstadoGrabacion {
   /// llevando al mismo acopio.
   final PuntoGeo? destino;
   final String? destinoNombre;
+
+  /// Lo que se guardo con el recorrido al empezarlo: de que vuelta de la
+  /// planilla es, donde dejar el vagon vacio. Lo lee quien abrio la grabacion;
+  /// el grabador solo lo lleva y lo devuelve.
+  final Map<String, Object?> propiedades;
+
+  /// Los puntos grabados hasta ahora, para dibujar en el mapa por donde se
+  /// vino. Es la misma lista que crece adentro del grabador, sin copiar: en un
+  /// viaje de dos horas son miles de puntos y copiarlos con cada fix seria
+  /// trabajo tirado. Quien la lee no la modifica.
+  final List<PuntoGeo> linea;
 
   /// Hay una grabacion abierta de antes -la app se cerro a mitad del viaje- y
   /// todavia no se retomo. La pantalla ofrece seguirla o terminarla.
@@ -109,6 +122,8 @@ class Grabador extends StateNotifier<EstadoGrabacion> {
               (destino[0] as num).toDouble(),
             ),
       destinoNombre: propiedades['destino_nombre'] as String?,
+      propiedades: propiedades,
+      linea: _puntos,
       abiertaSinGrabar: true,
     );
   }
@@ -125,18 +140,20 @@ class Grabador extends StateNotifier<EstadoGrabacion> {
     if (usuario == null) return;
     if (state.codigo != null) await terminar();
 
+    final todas = <String, Object?>{
+      ...propiedades,
+      // [lon, lat], como todo en el GeoJSON.
+      if (destino != null) 'destino': [destino.longitud, destino.latitud],
+      'destino_nombre': destinoNombre,
+    };
     final fila = await _trazados.abrirGrabacion(
       usuarioCodigo: usuario,
       nombre: nombre,
-      propiedades: {
-        ...propiedades,
-        // [lon, lat], como todo en el GeoJSON.
-        if (destino != null) 'destino': [destino.longitud, destino.latitud],
-        'destino_nombre': destinoNombre,
-      },
+      propiedades: todas,
     );
     _puntos.clear();
     _precisiones.clear();
+    _sinGuardar = 0;
     if (!mounted) return;
     state = EstadoGrabacion(
       codigo: fila.codigo,
@@ -144,6 +161,8 @@ class Grabador extends StateNotifier<EstadoGrabacion> {
       inicio: fila.iniciadoEn,
       destino: destino,
       destinoNombre: destinoNombre,
+      propiedades: todas,
+      linea: _puntos,
     );
     _escuchar();
   }
@@ -159,12 +178,18 @@ class Grabador extends StateNotifier<EstadoGrabacion> {
       inicio: state.inicio,
       destino: state.destino,
       destinoNombre: state.destinoNombre,
+      propiedades: state.propiedades,
+      linea: _puntos,
     );
     _escuchar();
   }
 
   /// Cierra la grabacion, calcula sus numeros y la manda a subir.
-  Future<void> terminar() async {
+  ///
+  /// [propiedades] se suma a lo que el recorrido ya llevaba guardado: es por
+  /// donde entra lo que solo se sabe al final, como la calificacion de la
+  /// ruta.
+  Future<void> terminar({Map<String, Object?> propiedades = const {}}) async {
     final codigo = state.codigo;
     if (codigo == null) return;
     await _soltarGps();
@@ -176,11 +201,26 @@ class Grabador extends StateNotifier<EstadoGrabacion> {
       codigo,
       List.of(_puntos),
       precisionMediaM: precision,
+      propiedades: propiedades,
     );
     _puntos.clear();
     _precisiones.clear();
     if (mounted) state = const EstadoGrabacion();
     _alCerrar();
+  }
+
+  /// Tira la grabacion sin guardarla: el viaje no se hizo.
+  ///
+  /// Es lo que pasa al soltar una vuelta tomada por error. Cerrarla la subiria
+  /// a la base como un viaje de esa vuelta, que es justo lo que no fue.
+  Future<void> descartar() async {
+    final codigo = state.codigo;
+    if (codigo == null) return;
+    await _soltarGps();
+    await _trazados.borrar(codigo);
+    _puntos.clear();
+    _precisiones.clear();
+    if (mounted) state = const EstadoGrabacion();
   }
 
   void _escuchar() {
@@ -236,6 +276,8 @@ class Grabador extends StateNotifier<EstadoGrabacion> {
         inicio: state.inicio,
         destino: state.destino,
         destinoNombre: state.destinoNombre,
+        propiedades: state.propiedades,
+        linea: _puntos,
       );
 
   @override

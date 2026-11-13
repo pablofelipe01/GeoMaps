@@ -57,17 +57,44 @@ class Vuelta(BaseModel):
         )
 
 
+class Conductor(BaseModel):
+    """Como esta parada la cuenta para tomar una vuelta.
+
+    Con esto la app arma el dialogo de confirmar sin adivinar: pide la cedula
+    solo si todavia no hay una atada, y la clave solo si la cuenta tiene una.
+    """
+
+    # La cedula atada a la cuenta, o nulo si todavia no confirmo ninguna vuelta.
+    cedula: str | None = None
+    # Como figura en el registro de conductores de SiriusFleet. Nulo si no hay
+    # cedula atada, o si la atada ya no esta entre los conductores activos.
+    nombre: str | None = None
+    # Las cuentas de Google no tienen clave: confirman con la sesion.
+    pide_clave: bool = True
+
+
 class VueltasResponse(BaseModel):
     vueltas: list[Vuelta]
+    # Nulo si no se pudo leer la cuenta: la lista sale igual, y el dialogo
+    # pide todo como la primera vez.
+    conductor: Conductor | None = None
 
 
 class ConfirmarRequest(BaseModel):
-    """La firma del conductor: su cedula y la clave de su cuenta de GeoMaps."""
+    """La firma del conductor.
 
-    cedula: str = Field(min_length=1, max_length=30)
-    clave: str = Field(min_length=1, max_length=200)
+    `cedula` hace falta la primera vez; despues queda atada a la cuenta y se
+    puede omitir. `clave` hace falta solo en las cuentas que tienen una.
+    """
+
+    cedula: str | None = Field(default=None, max_length=30)
+    clave: str | None = Field(default=None, max_length=200)
 
 
 class ConfirmarResponse(BaseModel):
     vuelta: Vuelta
     conductor: str
+
+
+class SoltarResponse(BaseModel):
+    vuelta: Vuelta

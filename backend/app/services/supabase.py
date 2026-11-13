@@ -167,3 +167,30 @@ async def anotar_salida(
         )
     _revisar(r)
     return bool(r.json())
+
+
+async def anular_salida(
+    settings: Settings, vuelta_id: str, operador_id: str
+) -> bool:
+    """Devuelve la vuelta a la lista. Falso si no era de ese conductor.
+
+    El filtro por `operador_id` va en el UPDATE por lo mismo que en
+    `anotar_salida`: es la base la que decide, no una lectura previa. La marca
+    `vuelta_pendiente` no se toca -sigue en verdadero desde que se reporto-,
+    asi que con la salida en blanco el renglon vuelve solo a la lista.
+    """
+    base, cabeceras = _base(settings)
+    async with httpx.AsyncClient(timeout=TIMEOUT) as client:
+        r = await client.patch(
+            f"{base}/viajes_vagones",
+            headers={**cabeceras, "Prefer": "return=representation"},
+            params={
+                "id": f"eq.{vuelta_id}",
+                "operador_id": f"eq.{operador_id}",
+                "vuelta_pendiente": "eq.true",
+                "salida_en": "not.is.null",
+            },
+            json={"operador_id": None, "salida_en": None},
+        )
+    _revisar(r)
+    return bool(r.json())

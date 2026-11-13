@@ -34,7 +34,7 @@ la app nunca lo espera: el dato se guarda local primero y se sincroniza despues.
 |---|---|---|
 | App | **Flutter 3 + Riverpod 2** | Un solo codigo, APK directo, y es lo que el equipo ya escribe en `sirius_agro` |
 | Mapa | **flutter_map 8** | Raster, sin llave, y deja superponer capas del usuario sin pelear con un motor de estilos |
-| Mapas offline | **MBTiles** (SQLite) + **FMTC** | El MBTiles es el mapa que trae el usuario; FMTC cachea las regiones que se bajan de un servidor |
+| Mapas offline | **Cache de flutter_map** + **MBTiles** (pendiente) | La zona del satelite que se baja queda en la misma cache de la que el mapa lee sin senal; el MBTiles es el mapa pesado que trae el usuario, todavia sin implementar |
 | Reproyeccion | **proj4dart** | Un GeoPDF de topografia casi nunca viene en Web Mercator |
 | BD local | **Drift / SQLite** | Waypoints, trazados y el catalogo de capas. Fuente de verdad mientras no hay red |
 | GPS | **geolocator + flutter_foreground_task** | El trazado sigue grabando con la pantalla apagada |
@@ -90,9 +90,30 @@ de Android ve el `localhost` de la maquina, y un celular fisico por USB usa
 
 ## Estado
 
-Estructura inicial. Ningun modulo esta implementado todavia: los archivos de
-`app/lib` y `backend/app` llevan el contrato que cada uno tiene que cumplir y
-un `TODO` donde va el cuerpo.
+**Anda hoy, sin senal salvo donde se dice:**
+
+| Que | Donde |
+|---|---|
+| Entrar con Google o con correo y clave; la sesion dura 30 dias y se renueva sola al abrir la app con senal | `state/sesion.dart`, `POST /v1/sesion/renovar` |
+| Mapa satelital y de calles con la posicion, la precision, la escala y el giro tipo navegador | `ui/mapa_page.dart` |
+| Mapa de Guaicaramo: lotes, vias, acopios, y ruta por las vias con recalculo | `core/ruteo.dart` |
+| Planos de topografia (GeoPDF) importados como capa | `ui/importar_mapa_page.dart` |
+| **Bajar una zona del satelite** para verla sin senal (necesita red para bajarla) | `ui/descargar_region_page.dart` |
+| Donde el satelite no tiene imagen del nivel pedido (el cartel "Map data not yet available") o no hay senal, el mapa muestra la del nivel anterior ampliada | `core/fuente_teselas.dart` |
+| **Iniciar una ruta** y, al llegar o terminarla, **calificar** de 1 a 5 el camino por donde se paso; la nota queda con el recorrido grabado | `ui/calificar_ruta.dart` |
+| **Grabar un recorrido** con la pantalla apagada, y verlo dibujarse | `state/grabacion.dart` |
+| **Marcar puntos** con simbolo y nota, con el GPS o a mano | `ui/waypoint_page.dart` |
+| **Medir** distancia y area sobre el mapa, y guardar el area | `ui/medicion.dart` |
+| **Compartir** recorridos, areas y puntos como KML, GPX o GeoJSON | `core/exportador.dart` |
+| Subir recorridos, areas, rutas y puntos a Airtable y S3 al volver la red | `state/sincronizador.dart` |
+| Camiones: escanear el QR, tomar una vuelta, ir por los vagones y a dejar el vacio, devolverla si fue un error (tomar y devolver necesitan senal) | `lib/camiones/` |
+
+**Falta:**
+
+- **MBTiles** propios (el mapa pesado que convierte el backend) y su descarga.
+- Fotos en los puntos, y el **PDF** de entrega.
+- Proyectos como espejo del directorio de Airtable (`GET /v1/proyectos`).
+- Recuperacion de clave y verificacion de correo (ver `docs/arquitectura.md`).
 
 ## Autoria y propiedad
 

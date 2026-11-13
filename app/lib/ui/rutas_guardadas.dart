@@ -10,12 +10,16 @@ import 'capa_ruta.dart';
 /// Viene escrito con lo que se sabe -el acopio, o "Ruta a ..." con la
 /// distancia-: guardar tiene que poder ser un toque, y el nombre se cambia solo
 /// si se quiere.
-Future<String?> pedirNombreRuta(BuildContext context, String sugerido) {
+Future<String?> pedirNombreRuta(
+  BuildContext context,
+  String sugerido, {
+  String titulo = 'Guardar ruta',
+}) {
   final texto = TextEditingController(text: sugerido);
   return showDialog<String>(
     context: context,
     builder: (dialogo) => AlertDialog(
-      title: const Text('Guardar ruta'),
+      title: Text(titulo),
       content: TextField(
         controller: texto,
         autofocus: true,

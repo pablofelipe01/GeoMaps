@@ -37,8 +37,8 @@ class SincronizacionPage extends ConsumerWidget {
               pendientes == 0
                   ? 'Todo esta en la base'
                   : pendientes == 1
-                  ? '1 ruta sin subir'
-                  : '$pendientes rutas sin subir',
+                  ? '1 registro sin subir'
+                  : '$pendientes registros sin subir',
             ),
             subtitle: Text(
               ultima == null

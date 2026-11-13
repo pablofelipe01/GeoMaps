@@ -143,6 +143,95 @@ class TrazadosRepository {
     );
   }
 
+  /// Guarda un area medida en el mapa: el lote que alguien marco esquina por
+  /// esquina con el dedo.
+  ///
+  /// Es `manual` y no `automatico` porque nadie camino ese lindero: no tiene
+  /// precision de GPS, y por eso no puede pasar por un levantamiento.
+  ///
+  /// La geometria se guarda como **linea cerrada** -el primer vertice repetido
+  /// al final- y no como `Polygon`: es lo que el backend ya sabe recibir, y el
+  /// `tipo` dice que es un poligono. Al exportar a KML sale como `Polygon`.
+  Future<Trazado> guardarPoligono({
+    required String usuarioCodigo,
+    required String nombre,
+    required List<PuntoGeo> vertices,
+  }) {
+    if (vertices.length < 3) {
+      throw ArgumentError('Un poligono necesita al menos tres vertices.');
+    }
+    final limpio = nombre.trim();
+    final anillo = [...vertices, vertices.first];
+    final centro = GeoJson.centroide(vertices);
+    final hectareas = areaHa(vertices);
+    final perimetro = perimetroM(vertices);
+    final ahora = DateTime.now();
+
+    return _db
+        .into(_db.trazados)
+        .insertReturning(
+          TrazadosCompanion.insert(
+            codigo: _uuid.v4(),
+            proyectoCodigo: MapasRepository.proyectoLocal,
+            nombre: limpio.isEmpty ? 'Area sin nombre' : limpio,
+            tipo: TipoTrazado.poligono.name,
+            metodo: MetodoCaptura.manual.name,
+            geometria: jsonEncode(
+              GeoJson.linea(
+                anillo,
+                propiedades: {
+                  'nombre': limpio,
+                  'metodo': MetodoCaptura.manual.name,
+                  'area_ha': double.parse(hectareas.toStringAsFixed(4)),
+                  'perimetro_m': perimetro.roundToDouble(),
+                },
+              ),
+            ),
+            bbox: Value(GeoJson.bbox(vertices)),
+            centroLat: Value(centro.latitud),
+            centroLon: Value(centro.longitud),
+            puntos: Value(vertices.length),
+            distanciaM: Value(perimetro),
+            areaHa: Value(hectareas),
+            usuarioCodigo: Value(usuarioCodigo),
+            iniciadoEn: Value(ahora),
+            terminadoEn: Value(ahora),
+            creadoEn: ahora,
+          ),
+        );
+  }
+
+  /// Lo que la cuenta levanto en campo: recorridos grabados y areas medidas,
+  /// lo mas nuevo arriba, en vivo. Las rutas calculadas no van aca -tienen su
+  /// lista-, ni la grabacion que todavia esta en curso.
+  Stream<List<Trazado>> observarLevantados(String usuarioCodigo) {
+    final consulta = _db.select(_db.trazados)
+      ..where(
+        (t) =>
+            t.usuarioCodigo.equals(usuarioCodigo) &
+            t.metodo.equals(MetodoCaptura.calculada.name).not() &
+            t.terminadoEn.isNotNull(),
+      )
+      ..orderBy([(t) => OrderingTerm.desc(t.creadoEn)]);
+    return consulta.watch();
+  }
+
+  /// Le cambia el nombre. Vuelve a quedar pendiente de subir: el nombre es lo
+  /// que se lee en Airtable.
+  Future<void> renombrar(String codigo, String nombre) {
+    final limpio = nombre.trim();
+    if (limpio.isEmpty) return Future.value();
+    return (_db.update(
+      _db.trazados,
+    )..where((t) => t.codigo.equals(codigo))).write(
+      TrazadosCompanion(
+        nombre: Value(limpio),
+        sincronizado: const Value(false),
+        actualizadoEn: Value(DateTime.now()),
+      ),
+    );
+  }
+
   /// La saca del telefono. Si ya subio, la fila de Airtable y el GeoJSON de S3
   /// se quedan: borrar del lado del servidor no existe todavia.
   Future<void> borrar(String codigo) {
@@ -270,6 +359,7 @@ class TrazadosRepository {
     String codigo,
     List<PuntoGeo> puntos, {
     double? precisionMediaM,
+    Map<String, Object?> propiedades = const {},
   }) async {
     final fila = await _fila(codigo);
     if (fila == null) return null;
@@ -285,7 +375,12 @@ class TrazadosRepository {
     )..where((t) => t.codigo.equals(codigo))).write(
       TrazadosCompanion(
         geometria: Value(
-          _conPuntos(fila.geometria, puntos, distanciaM: distancia),
+          _conPuntos(
+            fila.geometria,
+            puntos,
+            distanciaM: distancia,
+            extra: propiedades,
+          ),
         ),
         puntos: Value(puntos.length),
         distanciaM: Value(distancia),
@@ -314,11 +409,12 @@ class TrazadosRepository {
     String geometria,
     List<PuntoGeo> puntos, {
     double? distanciaM,
+    Map<String, Object?> extra = const {},
   }) {
     final anterior = jsonDecode(geometria) as Map<String, dynamic>;
     final propiedades = Map<String, Object?>.from(
       anterior['properties'] as Map? ?? const {},
-    );
+    )..addAll(extra);
     if (distanciaM != null) propiedades['distancia_m'] = distanciaM.round();
     return jsonEncode(GeoJson.linea(puntos, propiedades: propiedades));
   }

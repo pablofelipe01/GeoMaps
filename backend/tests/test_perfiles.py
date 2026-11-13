@@ -43,3 +43,62 @@ def test_exigir_perfil():
     with pytest.raises(HTTPException) as exc:
         auth.exigir_perfil(camionero, "plantacion")
     assert exc.value.status_code == 403
+
+
+# --- Renovar la sesion -----------------------------------------------------
+
+
+def _renovar(monkeypatch, campos: dict | None):
+    """Llama a `renovar_sesion` con Airtable reemplazado por una fila."""
+    from app import main
+    from app.services import airtable
+
+    monkeypatch.setattr(get_settings(), "jwt_secret", "secreto-de-prueba-bien-largo-para-hs256")
+
+    async def buscar_uno(settings, tabla, formula):
+        return None if campos is None else {"id": "rec1", "fields": campos}
+
+    monkeypatch.setattr(airtable, "buscar_uno", buscar_uno)
+    vieja = auth.Identidad(
+        auth_uid="pwd_ana",
+        correo="ana@x.co",
+        nombre="",
+        foto=None,
+        codigo_usuario="cod-ana",
+        perfiles=("plantacion",),
+    )
+    return anyio.run(main.renovar_sesion, vieja, None)
+
+
+def test_renovar_trae_los_perfiles_que_la_cuenta_tiene_hoy(monkeypatch):
+    """Darle el perfil de camiones en Airtable le llega sin cerrar sesion."""
+    r = _renovar(
+        monkeypatch,
+        {
+            "Auth UID": "pwd_ana",
+            "Nombre": "Ana",
+            "Correo": "ana@x.co",
+            "Codigo usuario": "cod-ana",
+            "Proveedor": "Correo",
+            "Perfiles": ["Plantacion", "Camiones"],
+        },
+    )
+    assert r.perfiles == ["plantacion", "camiones"]
+    assert r.codigo_usuario == "cod-ana"
+    assert r.proveedor == "Correo"
+
+    nueva = anyio.run(auth.identidad_de_request, f"Bearer {r.token}")
+    assert nueva.perfiles == ("plantacion", "camiones")
+    assert nueva.auth_uid == "pwd_ana"
+
+
+def test_renovar_no_deja_pasar_a_una_cuenta_suspendida(monkeypatch):
+    with pytest.raises(HTTPException) as exc:
+        _renovar(monkeypatch, {"Auth UID": "pwd_ana", "Estado": "Suspendida"})
+    assert exc.value.status_code == 403
+
+
+def test_renovar_una_cuenta_borrada(monkeypatch):
+    with pytest.raises(HTTPException) as exc:
+        _renovar(monkeypatch, None)
+    assert exc.value.status_code == 403

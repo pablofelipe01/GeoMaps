@@ -25,11 +25,10 @@ dependencies:
   # flutter_map_mbtiles:
   # mbtiles:
 
-  # Cache de las teselas que SI se bajan de internet (Esri, OSM). Permite
-  # "descargar esta region" sobre el mapa base, que es distinto de importar
-  # un MBTiles propio.
-  # TODO(descarga-regiones): reactivar al implementar la descarga por area.
-  # flutter_map_tile_caching:
+  # "Descargar esta region" del mapa base no necesita paquete aparte: usa la
+  # cache que ya trae flutter_map (ver `state/descarga.dart`), la misma de la
+  # que el mapa lee sin senal. flutter_map_tile_caching quedo descartado: es
+  # GPL y arrastra una base nativa para hacer lo mismo.
 
   # Reproyeccion. Un plano de topografia colombiano llega en MAGNA-SIRGAS
   # (EPSG:3116, 9377...), no en WGS84.

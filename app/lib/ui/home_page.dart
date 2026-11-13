@@ -11,7 +11,7 @@ import '../state/sesion.dart';
 import '../state/sincronizador.dart';
 import '../state/ubicacion_provider.dart';
 import 'actualizacion_page.dart';
-import 'en_construccion.dart';
+import 'descargar_region_page.dart';
 import 'mapa_guaicaramo.dart';
 import 'mapa_page.dart';
 import 'proyectos_page.dart';
@@ -115,6 +115,30 @@ class HomePage extends ConsumerWidget {
                 subtitle: const Text(
                   'Podes trabajar sin senal durante ese plazo.',
                 ),
+              ),
+              ListTile(
+                leading: const Icon(Icons.manage_accounts_outlined),
+                title: const Text('Actualizar mi cuenta'),
+                subtitle: const Text(
+                  'Trae los permisos que te hayan asignado. Necesita senal.',
+                ),
+                onTap: () async {
+                  Navigator.pop(hoja);
+                  final avisos = ScaffoldMessenger.of(context);
+                  final ok = await ref
+                      .read(sesionProvider.notifier)
+                      .renovar(forzar: true);
+                  avisos.showSnackBar(
+                    SnackBar(
+                      content: Text(
+                        ok
+                            ? 'Cuenta actualizada.'
+                            : 'No se pudo actualizar. Revisa la senal y '
+                                  'volve a intentar.',
+                      ),
+                    ),
+                  );
+                },
               ),
               ListTile(
                 leading: const Icon(Icons.privacy_tip_outlined),
@@ -428,16 +452,7 @@ class _Accesos extends ConsumerWidget {
             icono: Icons.download_outlined,
             titulo: 'Descargas',
             detalle: 'Mapas sin senal',
-            alTocar: () => _ir(
-              context,
-              const EnConstruccionPage(
-                titulo: 'Descargas',
-                icono: Icons.download_outlined,
-                detalle:
-                    'Aca vas a bajar al telefono los mapas de un proyecto, '
-                    'y a recortar una region del satelite para usarla sin senal.',
-              ),
-            ),
+            alTocar: () => _ir(context, const DescargarRegionPage()),
           ),
         _Tarjeta(
           icono: Icons.sync,

@@ -281,6 +281,66 @@ class SesionNotifier extends StateNotifier<EstadoSesion> {
     state = EstadoSesion(sesion: sesion);
   }
 
+  bool _renovando = false;
+  DateTime? _ultimaRenovacion;
+
+  /// Cada cuanto vale la pena volver a preguntar. Del otro lado es una
+  /// consulta a Airtable, que topa en cinco por segundo para todos.
+  static const _entreRenovaciones = Duration(hours: 1);
+
+  /// Cambia el JWT por uno nuevo, con lo que la cuenta tenga hoy.
+  ///
+  /// Sirve para dos cosas. Los **perfiles** viajan adentro del token: darle a
+  /// alguien el modulo de camiones en Airtable no le llegaba hasta que cerrara
+  /// sesion y volviera a entrar. Y el **plazo** se corre: quien abre la app
+  /// con senal de vez en cuando no vuelve a ver el login.
+  ///
+  /// Es callada a proposito. Sin red, o contra un backend que todavia no tiene
+  /// el endpoint, no pasa nada: la sesion guardada sigue valiendo lo que
+  /// valia. Lo unico que si saca a la persona es que la cuenta ya no exista o
+  /// este suspendida, que es justo cuando el token viejo no deberia servir.
+  ///
+  /// Devuelve si la sesion quedo renovada. Con [forzar] no espera el plazo
+  /// entre renovaciones: es el boton de "actualizar mi cuenta".
+  Future<bool> renovar({bool forzar = false}) async {
+    final actual = state.sesion;
+    if (actual == null || _renovando || _api.token == null) return false;
+    final ultima = _ultimaRenovacion;
+    if (!forzar &&
+        ultima != null &&
+        DateTime.now().difference(ultima) < _entreRenovaciones) {
+      return false;
+    }
+
+    _renovando = true;
+    try {
+      final datos = await _api.renovarSesion();
+      final nueva = Sesion.deJson(datos);
+      // Mientras se esperaba la respuesta pudo cerrarse la sesion o entrar
+      // otra cuenta: el token que llego ya no es de quien esta adentro.
+      if (state.sesion?.authUid != actual.authUid ||
+          nueva.authUid != actual.authUid) {
+        return false;
+      }
+      _api.token = datos['token'] as String;
+      await _almacen.write(key: _llaveToken, value: _api.token);
+      await _almacen.write(key: _llaveSesion, value: jsonEncode(nueva.aJson()));
+      _ultimaRenovacion = DateTime.now();
+      if (mounted) state = EstadoSesion(sesion: nueva);
+      return true;
+    } on ApiError catch (e) {
+      if (e.codigo == 403 && state.sesion?.authUid == actual.authUid) {
+        await _limpiar();
+        if (mounted) state = EstadoSesion(error: e.mensaje);
+      }
+      return false;
+    } catch (_) {
+      return false;
+    } finally {
+      _renovando = false;
+    }
+  }
+
   /// Cierra sesion.
   ///
   /// TODO: antes de limpiar, avisar si quedan trazados sin sincronizar y
