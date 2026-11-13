@@ -97,6 +97,7 @@ de Android ve el `localhost` de la maquina, y un celular fisico por USB usa
 | Entrar con Google o con correo y clave; la sesion dura 30 dias y se renueva sola al abrir la app con senal | `state/sesion.dart`, `POST /v1/sesion/renovar` |
 | Mapa satelital y de calles con la posicion, la precision, la escala y el giro tipo navegador | `ui/mapa_page.dart` |
 | Mapa de Guaicaramo: lotes, vias, acopios, y ruta por las vias con recalculo | `core/ruteo.dart` |
+| Buscar un acopio por su numero y elegir el bloque con un toque, en letra grande y con el mas cercano primero | `ui/capa_acopios.dart` |
 | Planos de topografia (GeoPDF) importados como capa | `ui/importar_mapa_page.dart` |
 | **Bajar una zona del satelite** para verla sin senal (necesita red para bajarla) | `ui/descargar_region_page.dart` |
 | Donde el satelite no tiene imagen del nivel pedido (el cartel "Map data not yet available") o no hay senal, el mapa muestra la del nivel anterior ampliada | `core/fuente_teselas.dart` |

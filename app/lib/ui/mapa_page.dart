@@ -633,11 +633,17 @@ class _MapaPageState extends ConsumerState<MapaPage>
   }
 
   void _irAlAcopio(Acopio a) {
-    _fijarDestino(a.punto, nombre: a.etiqueta);
+    _fijarDestino(a.punto, nombre: a.etiquetaLarga);
   }
 
   Future<void> _buscarAcopio(AcopiosPredio acopios) async {
-    final elegido = await buscarAcopio(context, acopios);
+    final p = _posicion;
+    final elegido = await buscarAcopio(
+      context,
+      acopios,
+      // Con la posicion, la lista pone primero el que queda mas cerca.
+      desde: p == null ? null : LatLng(p.latitude, p.longitude),
+    );
     if (elegido == null || !mounted) return;
     // Buscar es pedir ir a otro lado: la ruta anterior se suelta para que la
     // tarjeta del acopio nuevo, con su "Como llegar", quede a la vista.
@@ -1055,8 +1061,10 @@ class _MapaPageState extends ConsumerState<MapaPage>
     final abajo = _midiendo || fichaPunto
         ? 156.0
         : hayRuta
-        ? (conBoton ? 172.0 : 116.0)
-        : (fichaAcopio || fichaTrazado ? 116.0 : 32.0);
+        ? (conBoton ? 200.0 : 140.0)
+        : fichaAcopio
+        ? 188.0
+        : (fichaTrazado ? 116.0 : 32.0);
 
     return PopScope(
       // Atras, midiendo, deja de medir: no saca del mapa con media area hecha.

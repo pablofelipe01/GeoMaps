@@ -214,19 +214,19 @@ class PanelRuta extends StatelessWidget {
                       if (nombreDestino != null)
                         Text(
                           nombreDestino!,
-                          maxLines: 1,
+                          maxLines: 2,
                           overflow: TextOverflow.ellipsis,
                           style: TextStyle(
-                            fontSize: 12.5,
-                            fontWeight: FontWeight.w600,
+                            fontSize: 16,
+                            fontWeight: FontWeight.w800,
                             color: colores.primary,
                           ),
                         ),
                       Text(
                         '${formatearDistancia(restantes)}  ·  ${formatearMinutos(minutos)}',
                         style: const TextStyle(
-                          fontSize: 18,
-                          fontWeight: FontWeight.w700,
+                          fontSize: 22,
+                          fontWeight: FontWeight.w800,
                           fontFeatures: [FontFeature.tabularFigures()],
                         ),
                       ),
@@ -234,8 +234,8 @@ class PanelRuta extends StatelessWidget {
                       Text(
                         _detalle(),
                         style: TextStyle(
-                          fontSize: 12.5,
-                          color: colores.outline,
+                          fontSize: 14.5,
+                          color: colores.onSurfaceVariant,
                         ),
                       ),
                     ],
