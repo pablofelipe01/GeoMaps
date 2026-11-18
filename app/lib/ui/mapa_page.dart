@@ -39,6 +39,7 @@ import 'medicion.dart';
 import 'panel_grabacion.dart';
 import 'proveedor_teselas.dart';
 import 'rutas_guardadas.dart';
+import 'theme.dart';
 import 'trazado_page.dart';
 import 'waypoint_page.dart';
 
@@ -826,6 +827,30 @@ class _MapaPageState extends ConsumerState<MapaPage>
     );
   }
 
+  /// La pantalla de planos. Vuelve con las esquinas del plano que se acaba de
+  /// importar, o del que se pidio ver, y el mapa se encuadra sobre el.
+  ///
+  /// Sin esto, importar el mapa vial de otro municipio parece no hacer nada:
+  /// la capa queda cargada, pero a kilometros de lo que se esta mirando.
+  Future<void> _abrirPlanos() async {
+    final esquinas = await Navigator.of(context).push<List<LatLng>>(
+      MaterialPageRoute(builder: (_) => const ImportarMapaPage()),
+    );
+    if (esquinas == null || esquinas.isEmpty || !mounted) return;
+    setState(() {
+      _verPlanos = true;
+      _modo = _Seguimiento.libre;
+    });
+    if (!_mapaListo) return;
+    _mapa.fitCamera(
+      CameraFit.coordinates(
+        coordinates: esquinas,
+        maxZoom: 18,
+        padding: const EdgeInsets.fromLTRB(32, 120, 32, 120),
+      ),
+    );
+  }
+
   /// La lista de lo levantado: se elige algo y se lo ve en el mapa.
   Future<void> _abrirLevantados() async {
     final elegido = await elegirLevantado(context);
@@ -986,11 +1011,7 @@ class _MapaPageState extends ConsumerState<MapaPage>
               onPlanos: (v) => cambiar(() => _verPlanos = v),
               onAdministrarPlanos: () {
                 Navigator.pop(hoja);
-                Navigator.of(context).push(
-                  MaterialPageRoute<void>(
-                    builder: (_) => const ImportarMapaPage(),
-                  ),
-                );
+                _abrirPlanos();
               },
               onBuscarAcopio: acopios == null
                   ? null
@@ -1212,7 +1233,7 @@ class _MapaPageState extends ConsumerState<MapaPage>
                   strokeWidth: 2.5,
                   textStyle: const TextStyle(
                     color: Colors.white,
-                    fontSize: 13,
+                    fontSize: 15,
                     fontWeight: FontWeight.w700,
                     shadows: [Shadow(blurRadius: 4, color: Colors.black)],
                   ),
@@ -1627,19 +1648,19 @@ class _BarraEstado extends StatelessWidget {
 
     if (error != null) {
       texto = error!;
-      color = Colors.red.shade700;
+      color = ColoresEstado.mal;
     } else if (posicion == null) {
       // Sin internet no hay GPS asistido y el primer fix tarda: decirlo evita
       // que alguien crea que la app se colgo y la cierre justo antes del fix.
       texto =
           'Buscando senal GPS... Sin internet puede tardar unos minutos; '
           'a cielo abierto es mas rapido.';
-      color = Colors.orange.shade800;
+      color = ColoresEstado.aviso;
     } else if (Ubicacion.esDeCache(posicion!)) {
       texto =
           'Ultima posicion conocida (${Ubicacion.hace(posicion!)}). '
           'Buscando senal GPS...';
-      color = Colors.orange.shade800;
+      color = ColoresEstado.aviso;
     } else {
       final p = posicion!;
       texto =
@@ -1649,7 +1670,7 @@ class _BarraEstado extends StatelessWidget {
       // El umbral no es cosmetico: por encima de 10 m el punto no sirve para
       // marcar un vertice de lindero, y quien lo marca tiene que verlo en el
       // momento, no descubrirlo despues en la oficina.
-      color = p.accuracy <= 10 ? Colors.green.shade800 : Colors.orange.shade800;
+      color = p.accuracy <= 10 ? ColoresEstado.bien : ColoresEstado.aviso;
     }
 
     return SafeArea(
@@ -1664,7 +1685,7 @@ class _BarraEstado extends StatelessWidget {
         ),
         child: Row(
           children: [
-            const Icon(Icons.gps_fixed, color: Colors.white, size: 18),
+            const Icon(Icons.gps_fixed, color: Colors.white, size: 22),
             const SizedBox(width: 10),
             Expanded(
               child: Text(
@@ -1705,7 +1726,11 @@ class _CalculandoRuta extends StatelessWidget {
               child: CircularProgressIndicator(strokeWidth: 2.5),
             ),
             SizedBox(width: 16),
-            Text('Trazando la ruta por las vias del predio...'),
+            // Expandido: con la letra agrandada el renglon no entra en una
+            // sola linea y sin esto se salia de la tarjeta.
+            Expanded(
+              child: Text('Trazando la ruta por las vias del predio...'),
+            ),
           ],
         ),
       ),

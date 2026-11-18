@@ -271,7 +271,7 @@ class _LoginPageState extends ConsumerState<LoginPage> {
                     'Despues la app funciona un mes completo sin senal.',
                     textAlign: TextAlign.center,
                     style: TextStyle(
-                      fontSize: 13,
+                      fontSize: 15,
                       color: colores.onSurfaceVariant,
                     ),
                   ),
